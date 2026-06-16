@@ -31,6 +31,7 @@ using quisp::modules::common::IConfiguration;
 using quisp::modules::common::IQuantumBackend;
 
 class StationaryQubit : public IStationaryQubit {
+ friend class QSDCRepeatersApplication;
  protected:
   IBackendQubit *qubit_ref;
 
@@ -41,6 +42,9 @@ class StationaryQubit : public IStationaryQubit {
   void Lock(unsigned long rs_id, int rule_id, int action_id) override;
   void Unlock() override;
   bool isLocked() override;
+
+  // qsdc change: getter to check if the qubit is busy
+  bool isBusy() const { return is_busy; }
 
   /**
    * \brief Emit photon.

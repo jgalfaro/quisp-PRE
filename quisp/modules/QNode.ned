@@ -2,6 +2,7 @@ package modules;
 @namespace(quisp::modules);
 
 import modules.Application.Application;
+import modules.Application.QSDCRepeatersApplication;
 import modules.QRSA.quantumRoutingSoft;
 import modules.QNIC.*;
 import modules.Common.*;
@@ -26,8 +27,9 @@ module QNode
         inout quantum_port_receiver[] @loose; // BSA is active. Tells the neighboring nodes about the timings and so on.
         inout quantum_port_receiver_passive[] @loose; // BSA is passive. Doesnt do anything. EPPS is in charge here.
 
+
     submodules:
-        app: Application {
+        app: QSDCRepeatersApplication {
             parameters:
                 @display("p=30,43");
         }
