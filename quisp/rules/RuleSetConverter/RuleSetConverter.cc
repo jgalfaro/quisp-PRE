@@ -9,7 +9,34 @@
 #include "runtime/Runtime.h"
 #include "runtime/opcode.h"
 
+
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+
+#include <omnetpp.h>
+
+
 namespace quisp::rules::rs_converter {
+inline void log_file(const std::string& msg) {
+  static std::ofstream logfile("./log_app.log", std::ios::app);
+  if (!logfile.is_open()) return;
+
+  logfile << std::fixed << std::setprecision(9)
+          << "[" << omnetpp::simTime() << "] "
+          << msg << "\n";
+  logfile.flush();
+}
+
+
+#define QLOG(expr)                         \
+  do {                                     \
+    std::ostringstream _qs;                \
+    _qs << expr;                           \
+    log_file(_qs.str());                   \
+  } while (0)
+
 
 using runtime::InstructionTypes;
 
@@ -276,6 +303,8 @@ Program RuleSetConverter::constructAction(const ActionData *data) {
 }
 
 Program RuleSetConverter::constructEntanglementSwappingAction(const EntanglementSwapping *act) {
+
+  QLOG ("[CUSTOM BSM LOG] Node executed SwappingAction.");
   /*
     qubit: q0, q1
     reg: pauli_op_left, pauli_op_right, seq_no

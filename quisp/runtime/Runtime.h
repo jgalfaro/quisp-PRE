@@ -85,7 +85,8 @@ class Runtime {
     virtual void sendPurificationResult(const unsigned long ruleset_id, const QNodeAddr partner_addr, const int shared_rule_tag, const int sequence_number,
                                         const int measurement_result, PurType protocol) = 0;
     virtual void sendSwappingResult(const unsigned long ruleset_id, const QNodeAddr partner_addr, const QNodeAddr new_partner_addr, const int shared_rule_tag,
-                                    const int sequence_number, const int frame_correction) = 0;
+                                    const int sequence_number, const int frame_correction) = 0;    
+    // virtual void sendQSDCBSMResult(const unsigned long ruleset_id, const QNodeAddr partner_addr, const int bsm_outcome, const int group_id, const int shared_rule_tag) = 0;                                                           
     // Debugging
     virtual std::string getNodeInfo() { return ""; };
   };

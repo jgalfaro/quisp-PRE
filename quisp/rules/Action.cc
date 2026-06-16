@@ -38,6 +38,7 @@ void Purification::deserialize_json(json serialized) {
 }
 
 EntanglementSwapping::EntanglementSwapping(std::vector<int> partner_addr, int shared_rule_tag) : Action(partner_addr), shared_rule_tag(shared_rule_tag) {
+  EV_INFO << "PERFORMS ES";
   for (int i = 0; i < partner_addr.size(); i++) {
     QnicInterface remote_qnic_interface{partner_addr.at(i)};
     remote_qnic_interfaces.push_back(remote_qnic_interface);

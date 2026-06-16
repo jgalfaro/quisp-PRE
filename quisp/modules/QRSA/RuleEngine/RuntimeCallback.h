@@ -155,6 +155,8 @@ struct RuntimeCallback : public quisp::runtime::Runtime::ICallBack {
     rule_engine->send(pkt, "RouterPort$o");
   }
 
+  // void sendQSDCBSMResult(const unsigned long ruleset_id, const QNodeAddr partner_addr, const int bsm_outcome, const int group_id, const int shared_rule_tag);
+
   void freeAndResetQubit(IQubitRecord *qubit) override {
     auto *stat_qubit = rule_engine->provider.getStationaryQubit((qubit));
     rule_engine->freeConsumedResource(qubit->getQNicIndex(), stat_qubit, qubit->getQNicType());

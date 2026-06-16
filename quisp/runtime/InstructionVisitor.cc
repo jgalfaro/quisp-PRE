@@ -45,6 +45,14 @@ void InstructionVisitor::operator()(const INSTR_SEND_PURIFICATION_RESULT_QNodeAd
   runtime->callback->sendPurificationResult(ruleset_id, partner_addr, runtime->send_tag, sequence_number, measurement_result, protocol);
 }
 
+// void InstructionVisitor::operator()(const INSTR_SEND_QSDC_BSM_RESULT_QNodeAddr_RegId_QNodeAddr_RegId_& instruction) {
+//   auto [partner_addr, group_id] = instrucion.args;
+//   int bsm_outcome = runtime->loadVal(outcome_key).outcome();
+//   auto ruleset_id = runtime->ruleset.id;
+//   runtime->callback->sendQSDCBSMResult(ruleset_id, partner_addr, bsm_outcome, group_id runtime->send_tag);
+// }
+
+
 void InstructionVisitor::operator()(const INSTR_SEND_SWAPPING_RESULT_QNodeAddr_RegId_QNodeAddr_RegId_& instruction) {
   auto [partner, pauli_op_reg, new_partner, sequence_number_reg] = instruction.args;
   int pauli_op = runtime->getRegVal(pauli_op_reg);

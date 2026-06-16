@@ -1,10 +1,10 @@
-import base_messages;
 // /home/caio/Downloads/omnetpp-6.0.3/bin/opp_msgc ./quisp_qsdc/quisp/messages/qsdc_messages.msg 
+import base_messages;
 namespace quisp::messages;
 
 // Packet representing Bob's classical announcement of his BSM outcome
 
-packet QSDCBSMResultPacket extends Header {
+packet QSDCBSMResult extends Header {
     // RuleSet and Rule ID to identuify the operation to be done 
     unsigned long ruleset_id @setter(setRulesetId)         @getter(getRulesetId);
     int shared_rule_tag      @setter(setSharedRuleTag)     @getter(getSharedRuleTag);

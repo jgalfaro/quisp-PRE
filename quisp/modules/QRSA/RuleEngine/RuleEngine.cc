@@ -16,6 +16,7 @@
 #include "QNicStore/QNicStore.h"
 #include "RuntimeCallback.h"
 #include "messages/BSA_ipc_messages_m.h"
+#include "messages/qsdc_messages_m.h"
 #include "messages/QNode_ipc_messages_m.h"
 #include "messages/link_generation_messages_m.h"
 #include "modules/PhysicalConnection/BSA/types.h"
@@ -155,6 +156,8 @@ void RuleEngine::handleMessage(cMessage *msg) {
   } else if (auto *pkt = dynamic_cast<SwappingResult *>(msg)) {
     handleSwappingResult(pkt);
     // handle self message to check whether partner's result has arrived
+  }  else if (auto *pkt = dynamic_cast<QSDCBSMResult *>(msg)) {
+    handleQSDCBSMResult(pkt);
   } else if (auto *pkt = dynamic_cast<InternalRuleSetForwarding *>(msg)) {
     // add actual process
     auto serialized_ruleset = pkt->getRuleSet();
@@ -339,12 +342,27 @@ void RuleEngine::handlePurificationResult(PurificationResult *result) {
 }
 
 void RuleEngine::handleSwappingResult(SwappingResult *result) {
+  EV_INFO << "Entanglement Swap performed.";
   auto ruleset_id = result->getRulesetId();
   auto shared_rule_tag = result->getSharedRuleTag();
   auto sequence_number = result->getSequenceNumber();
   auto correction_frame = result->getCorrectionFrame();
   auto new_partner_addr = result->getNewPartner();
   std::vector<int> message_content = {sequence_number, correction_frame, new_partner_addr};
+  auto runtime = runtimes.findById(ruleset_id);
+  if (runtime == nullptr) return;
+  runtime->assignMessageToRuleSet(shared_rule_tag, message_content);
+}
+
+void RuleEngine::handleQSDCBSMResult(QSDCBSMResult *result) {
+
+  auto ruleset_id = result->getRulesetId();
+  auto shared_rule_tag = result->getSharedRuleTag();
+  auto group_id = result->getGroupId();
+  auto bsm_outcome = result->getBsmOutcome();
+  auto src_addr = result->getSrcAddr();
+
+  std::vector<int> message_content = {group_id, bsm_outcome, src_addr};
   auto runtime = runtimes.findById(ruleset_id);
   if (runtime == nullptr) return;
   runtime->assignMessageToRuleSet(shared_rule_tag, message_content);

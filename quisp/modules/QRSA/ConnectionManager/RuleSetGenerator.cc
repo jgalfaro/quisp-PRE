@@ -5,9 +5,14 @@
 #include "rules/Clause.h"
 #include "rules/Rule.h"
 
+
+
 namespace quisp::modules::ruleset_gen {
 
+
 using namespace quisp::rules;
+
+
 
 void RuleSetGenerator::generateReverseSwapAtHalfRuleSets(int left_index, int right_index, std::map<int, std::vector<std::unique_ptr<Rule>>>& rules_map, std::vector<int>& path,
                                                          int& shared_rule_tag) {
@@ -58,12 +63,12 @@ std::map<int, json> RuleSetGenerator::generateRuleSets(messages::ConnectionSetup
   // add tomography rules
   auto initiator_addr = path.front();
   ++shared_rule_tag;
-  // rules_map[initiator_addr].emplace_back(tomographyRule(responder_addr, initiator_addr, num_measure, shared_rule_tag));
-  // rules_map[responder_addr].emplace_back(tomographyRule(initiator_addr, responder_addr, num_measure, shared_rule_tag));
+  rules_map[initiator_addr].emplace_back(tomographyRule(responder_addr, initiator_addr, num_measure, shared_rule_tag));
+  rules_map[responder_addr].emplace_back(tomographyRule(initiator_addr, responder_addr, num_measure, shared_rule_tag));
   
   // Inject the QSDC Protocol instead of standard Tomography
-  rules_map[initiator_addr].emplace_back(qsdcEncodeRule(responder_addr, shared_rule_tag, 0));
-  rules_map[responder_addr].emplace_back(qsdcDecodeRule(initiator_addr, shared_rule_tag));
+  //rules_map[initiator_addr].emplace_back(qsdcEncodeRule(responder_addr, shared_rule_tag, 0));
+  //rules_map[responder_addr].emplace_back(qsdcDecodeRule(initiator_addr, shared_rule_tag));
 
   std::map<int, json> rulesets{};
   // pack rules into RuleSets and serialize it as json

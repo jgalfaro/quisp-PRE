@@ -83,14 +83,12 @@ void Application::handleMessage(cMessage *msg) {
 
 if (dynamic_cast<ConnectionSetupResponse *>(msg)) {
     logger->logPacket("handleMessage", msg);
-    delete msg;  
     return;
   }
 
   if (dynamic_cast<InternalRuleSetForwarding *>(msg) || 
       dynamic_cast<InternalRuleSetForwarding_Application *>(msg)) {
-    logger->logPacket("handleMessage", msg);
-    delete msg;  
+    logger->logPacket("handleMessage", msg); 
     return;
   }
 

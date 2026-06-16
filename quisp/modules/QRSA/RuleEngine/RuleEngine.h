@@ -15,6 +15,7 @@
 #include "QubitRecord/IQubitRecord.h"
 #include "messages/BSA_ipc_messages_m.h"
 #include "messages/classical_messages.h"
+#include "messages/qsdc_messages_m.h"
 #include "messages/link_generation_messages_m.h"
 #include "modules/Logger/LoggerBase.h"
 #include "modules/QNIC.h"
@@ -82,6 +83,7 @@ class RuleEngine : public IRuleEngine, public Logger::LoggerBase {
   void handleLinkGenerationResult(messages::CombinedBSAresults *bsa_result);
   void handlePurificationResult(messages::PurificationResult *purification_result);
   void handleSwappingResult(messages::SwappingResult *swapping_result);
+  void handleQSDCBSMResult(messages::QSDCBSMResult *qsdc_bsm_result);
   void handleSingleClickResult(messages::SingleClickResult *click_result);
   messages::CombinedBSAresults *generateCombinedBSAresults(int qnic_index);
   void executeAllRuleSets();
