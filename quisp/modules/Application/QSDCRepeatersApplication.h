@@ -122,20 +122,22 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     std::vector<int> current_bell_block_indices;
 
     bool expect_anti_correlation = false;
-
+    
     omnetpp::simtime_t start_delay = 0;
     omnetpp::simtime_t poll_interval = 0;
     omnetpp::simtime_t sample_interval = 0;
-
+    
     std::unordered_set<int> used_indices;
-
+    
     // Aux functions
     void repeatQubit(int dst, quisp::modules::StationaryQubit* entangled_qubit);
-    void entanglementSwap(quisp::modules::StationaryQubit* q0, quisp::modules::StationaryQubit* q1);
+    void measureBellStateAndSend(quisp::backends::IQubit* incoming_qubit, quisp::modules::StationaryQubit* local_qubit, int dst_addr, int seq_num);
     std::vector<LocalBellPair> generateEntangledPairs(int n, const char* qnic_type, int qnic_index, BellState state);
     omnetpp::cModule* getQNIC(const char* qnic_type, int qnic_index);
-  
-  
+    void handleIncomingPhotonAtRepeater(quisp::messages::PhotonicQubit* photon);
+    int eigenToInt(quisp::backends::abstract::EigenvalueResult r);
+    void forwardFlyingQubit(quisp::messages::PhotonicQubit* photon);
+    int determineEgressGate(int dest_addr);
     // OMNeT specifics
     void initialize() override;
     void handleMessage(omnetpp::cMessage* msg) override;
@@ -162,7 +164,6 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
         backends::IQubit* remote_qubit);
 
     // Utility:
-    int eigenToInt(quisp::backends::abstract::EigenvalueResult r);
     int countReadyPairsAndCollect(std::vector<int>& out_indices);
     void resetBlockState();
     int measureLocalInBasis(quisp::modules::StationaryQubit* qubit, char basis);
