@@ -48,55 +48,61 @@ network qsdc_network
                 @display("p=700,150;i=COMP");
         }
 
-connections:
+        connections:
 
-        // Alice <--> Repeater1
-        alice.port++ <--> ClassicalChannel <--> BSArepeater1.port++;
-        alice.quantum_port++ <--> QuantumChannel <--> BSArepeater1.quantum_port++;
+                // Alice <--> Repeater1
+                alice.port++ <--> ClassicalChannel <--> BSArepeater1.port++;
+                alice.quantum_port++ <--> QuantumChannel <--> BSArepeater1.quantum_port++;
 
-        // Repeater1 <--> Server (Generates Server qnic[0])
-        BSArepeater1.port++ <--> ClassicalChannel <--> server.port++;
-        BSArepeater1.quantum_port++ <--> QuantumChannel <--> server.quantum_port++;
+                // Repeater1 <--> Server
+                BSArepeater1.port++ <--> ClassicalChannel <--> server.port++;
+                BSArepeater1.quantum_port++ <--> QuantumChannel <--> server.quantum_port++;
 
-        // Server <--> Repeater2 (Generates Server qnic[1])
-        server.port++ <--> ClassicalChannel <--> BSArepeater2.port++;
-        server.quantum_port++ <--> QuantumChannel <--> BSArepeater2.quantum_port++;
+                // Server <--> Repeater2
+                server.port++ <--> ClassicalChannel <--> BSArepeater2.port++;
+                server.quantum_port++ <--> QuantumChannel <--> BSArepeater2.quantum_port++;
 
-        // Repeater2 <--> Bob
-        BSArepeater2.port++ <--> ClassicalChannel <--> bob.port++;
-        BSArepeater2.quantum_port++ <--> QuantumChannel <--> bob.quantum_port++;
+                // Repeater2 <--> Bob
+                BSArepeater2.port++ <--> ClassicalChannel <--> bob.port++;
+                BSArepeater2.quantum_port++ <--> QuantumChannel <--> bob.quantum_port++;
 
 
-        alice.appQuantumOut++ --> QuantumChannel {
-            distance = 2km;
-            channel_loss_rate = 0;
-            channel_x_error_rate = 0;
-            channel_y_error_rate = 0;
-            channel_z_error_rate = 0;
-        } --> BSArepeater1.appQuantumIn++;
+                // forward path: feft to right (output[1] -> input[0]) 
+                alice.appQuantumOut[1] --> QuantumChannel {
+                    distance = 2km;
+                    channel_loss_rate = 0;
+                    channel_x_error_rate = 0;
+                    channel_y_error_rate = 0;
+                    channel_z_error_rate = 0;
+                } --> BSArepeater1.appQuantumIn[0];
 
-        BSArepeater1.appQuantumOut++ --> QuantumChannel {
-            distance = 2km;
-            channel_loss_rate = 0;
-            channel_x_error_rate = 0;
-            channel_y_error_rate = 0;
-            channel_z_error_rate = 0;
-        } --> server.appQuantumIn++;
+                BSArepeater1.appQuantumOut[1] --> QuantumChannel {
+                    distance = 2km;
+                    // Add error parameters here as needed
+                } --> server.appQuantumIn[0];
 
-        server.appQuantumOut++ --> QuantumChannel {
-            distance = 2km;
-            channel_loss_rate = 0;
-            channel_x_error_rate = 0;
-            channel_y_error_rate = 0;
-            channel_z_error_rate = 0;
-        } --> BSArepeater2.appQuantumIn++;
+                server.appQuantumOut[1] --> QuantumChannel {
+                    distance = 2km;
+                } --> BSArepeater2.appQuantumIn[0];
 
-        BSArepeater2.appQuantumOut++ --> QuantumChannel {
-            distance = 2km;
-            channel_loss_rate = 0;
-            channel_x_error_rate = 0;
-            channel_y_error_rate = 0;
-            channel_z_error_rate = 0;
-        } --> bob.appQuantumIn++;
+                BSArepeater2.appQuantumOut[1] --> QuantumChannel {
+                    distance = 2km;
+                } --> bob.appQuantumIn[0];
 
+                // return path: right to left (output[0] -> input[1]) 
+                bob.appQuantumOut[0] --> QuantumChannel {
+                    distance = 2km;
+                } --> BSArepeater2.appQuantumIn[1];
+
+                BSArepeater2.appQuantumOut[0] --> QuantumChannel {
+                    distance = 2km;
+                } --> server.appQuantumIn[1];
+
+                server.appQuantumOut[0] --> QuantumChannel {
+                    distance = 2km;
+                } --> BSArepeater1.appQuantumIn[1];
+
+                BSArepeater1.appQuantumOut[0] --> QuantumChannel {
+                    distance = 2km;
+                } --> alice.appQuantumIn[1];
 }

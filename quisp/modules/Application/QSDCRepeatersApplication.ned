@@ -40,6 +40,10 @@ simple QSDCRepeatersApplication
     input fromRouter @loose;
     output toRouter @loose;
 
-    input fromQuantum @loose;
-    output toQuantum @loose;
+    input fromQuantum_r @loose;
+    input fromQuantum_l @loose;
+    
+    output toQuantum_l @loose;
+    output toQuantum_r @loose;
+    
 }

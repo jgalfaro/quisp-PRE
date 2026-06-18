@@ -47,13 +47,15 @@ static const char* SELF_WAIT_FOR_PAIRS = "SELF_WAIT_FOR_PAIRS";
 static const char* SELF_RECEPTION_TIMEOUT = "SELF_RECEPTION_TIMEOUT";
 static const char* SELF_SEND_PHOTON = "SELF_SEND_PHOTON";
 
+static const char* ACK_RECEIVED_PHOTON = "ACK_RECEIVED_PHOTON";
+
 void QSDCRepeatersApplication::initialize() {
     initializeLogger(provider);
 
-        // Only keep this module for EndNodes (same logic as Application.cc)
-        // Basically, only end nodes should run this.
+    // Only keep this module for EndNodes (same logic as Application.cc)
+    // Basically, only end nodes should run this.
 
-        // I decided to use this module in repeater modules in the first instance, so this part might be useless
+    // I decided to use this module in repeater modules in the first instance, so this part might be useless
 
     // if (!gate("toRouter")->isConnected() || !gate("fromRouter")->isConnected()) {
     //   auto* msg = new DeleteThisModule("DeleteThisModule");
@@ -74,14 +76,17 @@ void QSDCRepeatersApplication::initialize() {
     //          Server (who generates the entangled pairs on Psi-)
     //          Repeaters (who pass the messages with entanglement swapping)
 
-    is_alice    = par("is_alice").boolValue();
-    is_bob      = par("is_bob").boolValue();
-    is_repeater = par("is_repeater").boolValue();
-    is_server   = par("is_server").boolValue();
+    is_alice            = par("is_alice").boolValue();
+    is_bob              = par("is_bob").boolValue();
+    is_repeater         = par("is_repeater").boolValue();
+    is_server           = par("is_server").boolValue();
+    // checkup for starting communication
+    //is_ready_for_qsdc   = par("is_ready_for_qsdc").boolValue(); 
+
+    // test variable to make the testing process easier
     is_test     = par("is_test").boolValue();
-    
     if (is_test) {
-        scheduleAt(simTime(), new cMessage(SELF_SEND_PHOTON ));
+        scheduleAt(simTime(), new cMessage(SELF_SEND_PHOTON));
     }
 }
 
@@ -100,6 +105,7 @@ void QSDCRepeatersApplication::protocolInit() {
 *
 */
 std::vector<LocalBellPair> QSDCRepeatersApplication::generateEntangledPairs(int n, const char* qnic_type, int qnic_index, BellState state) {
+    QLOG("[QSDC PairGen] Generating Entangled Pairs...");
     std::vector<LocalBellPair> generated_pairs;
     
     if (n <= 0) return generated_pairs;
@@ -130,8 +136,7 @@ std::vector<LocalBellPair> QSDCRepeatersApplication::generateEntangledPairs(int 
 
     // atomic allocation check
     if (free_indices.size() < 2 * n) {
-        QLOG("[QSDC PairGen] Insufficient memory. Requested " << n << " pairs (" << 2*n 
-             << " qubits), but only " << free_indices.size() << " available in QNIC.");
+        QLOG("[QSDC PairGen] Insufficient memory. Requested " << n << " pairs (" << 2*n << " qubits), but only " << free_indices.size() << " available in QNIC.");
         return generated_pairs; // caller must handle resource exhaustion
     }
 
@@ -250,11 +255,32 @@ omnetpp::cModule* QSDCRepeatersApplication::getQNIC(const char* qnic_type, int q
     return nullptr;
 }
 
+void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::PhotonicQubit* photon) {
+    QLOG("[TEST] Processing Photon to perform QSDC...");
+    QLOG("[TEST] Sending confirmation to Server.");
+    
+    if (is_alice || is_bob) {
+        auto* rcv_photon_pkt = new QSDCSynAck("ACK_RECEIVED_PHOTON");
+        rcv_photon_pkt->setSrcAddr(my_address);
+        rcv_photon_pkt->setDestAddr(2); // Hardcoded Server address
+        
+        // Use a ternary to assign the parameter string cleanly
+        rcv_photon_pkt->addPar("from") = is_alice ? "alice" : "bob";
+        
+        send(rcv_photon_pkt, "toRouter");
+    }
+    
+    // CRITICAL: Deallocate the absorbed photon to release memory back to OMNeT++
+    delete photon; 
+}
 
 void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::PhotonicQubit* photon) {
+    QLOG("[TEST] Processing Photon to perform the Entanglement Swap...");
     // step 1: create a new pair of entangled qubits on the psi- state
     auto new_pairs = generateEntangledPairs(1, "qnic", 1, BellState::PsiMinus);
     int seq_num = (int)photon->par("sequence_number").longValue();
+    std::string photon_direction = photon->par("direction").stringValue();
+
     if (new_pairs.empty()) {
         QLOG("[REPEATER] FATAL: Insufficient quantum memory to generate ES pair. Dropping photon.");
         delete photon;
@@ -266,10 +292,17 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
 
     // extract the incoming backend IQubit from the OMNeT++ message
     auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
-    int bob_addr = par("bob_addr").intValue();
+
+
+    
+    //TODO
+    //int dst_addr = par("dst_addr").intValue();
+    int dst_addr = -1; //hardcoded bob_addr
+
+
 
     // step 2: entanglement swap with the incoming bit 
-    measureBellStateAndSend(incoming_qubit, local_half, bob_addr, seq_num);
+    measureBellStateAndSend(incoming_qubit, local_half, dst_addr, seq_num);
 
     // free the local qubit memory so it can be reused in future cycles
     local_half->setFree(true);
@@ -283,8 +316,10 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
     next_photon->addPar("qubit_index") = new_pairs[0].qi_2;
     next_photon->addPar("sequence_number") = seq_num;
 
-    send(next_photon, "toQuantum", 1);
-
+    if (photon_direction == "left")
+        send(next_photon, "toQuantum_l");
+    if (photon_direction == "right")
+        send(next_photon, "toQuantum_r");
     // clean up 
     delete photon;
 }
@@ -298,111 +333,80 @@ int QSDCRepeatersApplication::eigenToInt(quisp::backends::abstract::EigenvalueRe
 
 void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
 
-
-    // if (auto* photon = dynamic_cast<quisp::messages::PhotonicQubit*>(msg)) {
-    //     if (is_repeater) {
-    //         handleIncomingPhotonAtRepeater(photon);
-    //     } 
-    //     else if (is_alice) {
-    //         // Alice intercepts the server's left photon and tests it
-    //         int seq_num = (int)photon->par("sequence_number").longValue();
-    //         auto* qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
-            
-    //         // Measure in Z-basis
-    //         int alice_res = eigenToInt(qubit->measureZ());
-    //         QLOG("[QSDC Alice] Measured seq_num=" << seq_num << " in Z-basis. Result: " << alice_res);
-            
-    //         // Send result to Bob via classical channel
-    //         QSDCBSMResult* bell_req = new QSDCBSMResult("BELL_REQ");
-    //         bell_req->setSrcAddr(my_address);
-    //         bell_req->setDestAddr(par("bob_addr").intValue());
-    //         bell_req->setSequenceNum(seq_num);
-    //         bell_req->setBsmOutcome(alice_res); // Hijacking this field for Alice's result
-            
-    //         send(bell_req, "toRouter");
-    //         delete photon; // Cleanup physical photon wrapper
-    //     }
-    //     else if (is_bob) {
-    //         // Bob buffers the forwarded photon from the repeater
-    //         int seq_num = (int)photon->par("sequence_number").longValue();
-    //         bob_buffered_photons[seq_num] = photon;
-    //         evaluateBobTest(seq_num); // Attempt evaluation
-    //     }
-    //     else {
-    //         delete photon;
-    //     }
-    //     return;
-    // }
-
-    // if (strcmp(msg->getName(), "BSM_Announcement") == 0) {
-    //     auto* bsm_msg = check_and_cast<QSDCBSMResult*>(msg);
-    //     int seq_num = bsm_msg->getSequenceNum();
-    //     int bsm_outcome = bsm_msg->getBsmOutcome();
-        
-    //     if (is_bob) {
-    //         bob_bsm_outcomes[seq_num] = bsm_outcome;
-    //         evaluateBobTest(seq_num);
-    //     }
-    //     delete msg;
-    //     return;
-    // }
-
-    // if (strcmp(msg->getName(), "BELL_REQ") == 0) {
-    //     auto* req_msg = check_and_cast<QSDCBSMResult*>(msg);
-    //     int seq_num = req_msg->getSequenceNum();
-    //     int alice_res = req_msg->getBsmOutcome(); 
-        
-    //     if (is_bob) {
-    //         bob_alice_results[seq_num] = alice_res;
-    //         evaluateBobTest(seq_num);
-    //     }
-    //     delete msg;
-    //     return;
-    // }
-
-    // if (strcmp(msg->getName(), SELF_GENERATE_PAIRS) == 0) {
-    //     int number_of_pairs = par("number_of_bellpair").intValue(); 
-    //     QLOG("[SERVER] Generating " << number_of_pairs << " Bell pairs for left and right links.");
-        
-    //     auto left_pairs = generateEntangledPairs(number_of_pairs, "qnic", 0, BellState::PsiMinus);
-    //     auto right_pairs = generateEntangledPairs(number_of_pairs, "qnic", 1, BellState::PsiMinus);
-
-    //     if (left_pairs.empty() || right_pairs.empty()) {
-    //         QLOG("[QSDC SERVER] FATAL: Insufficient quantum memory. Aborting.");
-    //         delete msg;
-    //         return;
-    //     }
-
-    //     // Emit to Alice
-    //     for (size_t i = 0; i < left_pairs.size(); ++i) {
-    //         auto* photon_left = new quisp::messages::PhotonicQubit("SERVER_PHOTON_LEFT");
-    //         photon_left->setQubitRef(left_pairs[i].qubit_1->getBackendQubitRef());
-    //         photon_left->addPar("src_addr") = my_address;
-    //         photon_left->addPar("sequence_number") = (int)i; 
-    //         send(photon_left, "toQuantum", 0); 
-    //     }
-
-    //     // Emit to Repeater -> Bob
-    //     for (size_t i = 0; i < right_pairs.size(); ++i) {
-    //         auto* photon_right = new quisp::messages::PhotonicQubit("SERVER_PHOTON_RIGHT");
-    //         photon_right->setQubitRef(right_pairs[i].qubit_2->getBackendQubitRef());
-    //         photon_right->addPar("src_addr") = my_address;
-    //         photon_right->addPar("sequence_number") = (int)i; 
-    //         send(photon_right, "toQuantum", 1);
-    //     }
-
-    //     delete msg;
-    //     return;
-    // }
-
-    my_address = provider.getNodeAddr();
-    if (strcmp(msg->getName(), SELF_SEND_PHOTON) == 0) {
-        auto* photon = new quisp::messages::PhotonicQubit("SERVER_PHOTON_LEFT");
-        
-        send(photon, "toQuantum");
-        delete msg;
+    if (auto* photon = dynamic_cast<quisp::messages::PhotonicQubit*>(msg)) {
+        if (is_repeater) {
+            QLOG("[TEST] Photons arrived at Repeater...");
+            handleIncomingPhotonAtRepeater(photon);
+        } else if (is_alice || is_bob) {
+            QLOG("[TEST] Photons arrived at Repeater...");
+            handleIncomingPhotonAtEndNode(photon);
+        } else {
+            QLOG("[QSDC PHOTON] Photon received on a non-repeater and non-terminal node");
+            delete photon;
+        }
+        return;
     }
 
+    // After measuring, the endNode should make its own polarizations to make stay with the desired entanglement
+    if (dynamic_cast<QSDCBSMResult *>(msg)) {
+        auto* bsm_msg = check_and_cast<QSDCBSMResult*>(msg);
+        int seq_num = bsm_msg->getSequenceNum();
+        int bsm_outcome = bsm_msg->getBsmOutcome();
+        
+
+        delete msg;
+        return;
+    }
+
+    if (strcmp(msg->getName(), SELF_SEND_PHOTON) == 0) {
+        QLOG("[TEST] Generating Psi- Entangled Pairs and sending them to both connections");
+        auto qubit_pair = generateEntangledPairs(1, "qnic", 1, BellState::PsiMinus);
+
+        auto* left_half = qubit_pair[0].qubit_1;  
+        auto* right_half = qubit_pair[0].qubit_2; 
+
+        auto* photon_left = new quisp::messages::PhotonicQubit("TEST_SERVER_LEFT_PHOTON");
+        photon_left->setQubitRef(left_half->getBackendQubitRef());
+
+        auto* photon_right = new quisp::messages::PhotonicQubit("TEST_SERVER_RIGHT_PHOTON");
+        photon_right->setQubitRef(right_half->getBackendQubitRef());
+
+        
+        photon_left->addPar("sequence_number") = 0;
+        photon_left->addPar("direction") = "left";
+
+        photon_right->addPar("sequence_number") = 1;
+        photon_right->addPar("direction") = "right";
+
+        send(photon_left, "toQuantum_l");
+        send(photon_right, "toQuantum_r");
+        delete msg;
+        return;
+    }
+
+    if (auto* resp = dynamic_cast<quisp::messages::QSDCSynAck*>(msg)) {
+        QLOG("[TEST] EndNode received QuBIT");
+        // when Alice and bob receive a qubit, they send it to Server with the corresponding index to say that they received
+        // check index, if not good, they send a rollback bit (Alice didn't receive qubit n, but received qubit n+1)
+        // so they send qubit correction (and after that, they resend qubit n to both sides)
+        // must have a timeout
+
+        std::string from = resp->par("from").stringValue();
+        if (from == "alice") QLOG("[SERVER] Alice received QuBIT");
+        if (from == "bob")  QLOG("[SERVER] Bob received QuBIT");
+        delete msg;
+        return;
+    }
+
+    if (strcmp(msg->getName(), "QUBIT_CORRECTION") == 0) {
+        QLOG("[SERVER] Correction of not-received QuBIT");
+        // if is server etc has to do it, else it propagates
+        // when Alice and bob receive a qubit, they send it to Server
+        
+        delete msg;
+        return;
+    }
+    return;
 }
 
 

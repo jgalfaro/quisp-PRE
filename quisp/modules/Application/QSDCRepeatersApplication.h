@@ -73,8 +73,10 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     bool is_repeater    = false;
     bool is_server      = false;
     bool is_test        = false;
+    //bool is_ready_for_qsdc = false;
 
     utils::ComponentProvider provider;
+    // change variables names
     int my_address = -1;
     bool is_initiator = false;
     // Eve attack settings
@@ -135,6 +137,7 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     std::vector<LocalBellPair> generateEntangledPairs(int n, const char* qnic_type, int qnic_index, BellState state);
     omnetpp::cModule* getQNIC(const char* qnic_type, int qnic_index);
     void handleIncomingPhotonAtRepeater(quisp::messages::PhotonicQubit* photon);
+    void handleIncomingPhotonAtEndNode(quisp::messages::PhotonicQubit* photon);
     int eigenToInt(quisp::backends::abstract::EigenvalueResult r);
     void forwardFlyingQubit(quisp::messages::PhotonicQubit* photon);
     int determineEgressGate(int dest_addr);

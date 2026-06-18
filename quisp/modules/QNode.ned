@@ -27,8 +27,8 @@ module QNode
         inout quantum_port_receiver[] @loose; // BSA is active. Tells the neighboring nodes about the timings and so on.
         inout quantum_port_receiver_passive[] @loose; // BSA is passive. Doesnt do anything. EPPS is in charge here.
 
-        input appQuantumIn[1] @loose;
-        output appQuantumOut[1] @loose;
+        input appQuantumIn[2] @loose;
+        output appQuantumOut[2] @loose;
 
     submodules:
         app: QSDCRepeatersApplication {
@@ -98,8 +98,11 @@ module QNode
             router.toApp --> app.fromRouter;
             router.fromApp <-- app.toRouter;
 
-            app.toQuantum --> appQuantumOut[0];
-            app.fromQuantum <-- appQuantumIn[0];
+            app.toQuantum_l --> appQuantumOut[0];
+            app.toQuantum_r --> appQuantumOut[1];
+            
+            app.fromQuantum_l <-- appQuantumIn[0];
+            app.fromQuantum_r <-- appQuantumIn[1];
         }
         for i=0..sizeof(port)-1 {
             router.toQueue[i] --> queue[i].in; // Each routing port is connected to its own queue

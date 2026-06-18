@@ -18,3 +18,11 @@ packet QSDCBSMResult extends Header {
 
 }
 
+packet QSDCSynAck extends Header {
+    // RuleSet and Rule ID to identuify the operation to be done 
+    unsigned long ruleset_id @setter(setRulesetId)         @getter(getRulesetId);
+    int shared_rule_tag      @setter(setSharedRuleTag)     @getter(getSharedRuleTag);
+
+}
+
+
