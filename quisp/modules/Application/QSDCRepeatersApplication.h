@@ -71,7 +71,18 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   *
   */
   
-bool is_alice       = false;
+    int expected_bsms_count = 0;
+
+    // Add a tracker for cumulative Pauli corrections
+    struct PauliTracker {
+        bool apply_x = false;
+        bool apply_z = false;
+    };
+    std::map<int, std::vector<quisp::modules::StationaryQubit*>> server_emitted_qubits;
+    std::map<int, int> buffered_alice_bsms;
+    // Map sequence number to its cumulative Pauli corrections
+    std::map<int, PauliTracker> cumulative_corrections;
+    bool is_alice       = false;
     bool is_bob         = false;
     bool is_repeater    = false;
     bool is_server      = false;
@@ -155,8 +166,11 @@ bool is_alice       = false;
     void setMessage();
     void sendMessageSetup();
     void encodeAndPerformQSDC();
-    void decodeQSDC(int group_index, int alice_bsm);
+    void decodeQSDC();
+    bool comm_end_received = false;
 
+    // Add under New internal methods
+    void checkAndTriggerDecoding();
     
     // Aux functions
     void repeatQubit(int dst, quisp::modules::StationaryQubit* entangled_qubit);

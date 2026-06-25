@@ -28,4 +28,6 @@ packet QSDCSynAck extends Header {
 
     // Stores the Z-basis measurement outcome (+1 or -1) for Application-Layer Purification
     int meas_result          @setter(setMeasResult)        @getter(getMeasResult);
+
+    int expected_bsms        @setter(setExpectedBSMs)        @getter(getExpectedBSMs);
 }
