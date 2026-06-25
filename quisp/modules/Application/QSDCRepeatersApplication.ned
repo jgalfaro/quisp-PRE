@@ -11,7 +11,7 @@ simple QSDCRepeatersApplication
     bool is_test = default(false);
     
     int total_qubits_to_send = default(20);
-
+    string secret_message = default("Hello World!");
     int expected_bsms = default(1);
     
     // Define exact routing addresses for your topology

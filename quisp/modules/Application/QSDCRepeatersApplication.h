@@ -7,12 +7,14 @@
 
 #include "PhotonicQubit_m.h"
 #include "backends/interfaces/IQubit.h"
+#include "messages/qsdc_messages_m.h"
+#include "messages/classical_messages.h"
 
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
 #include <vector>
-#include <map> // MOVED OUTSIDE THE CLASS
+#include <map>
 
 
 namespace omnetpp {
@@ -136,7 +138,25 @@ bool is_alice       = false;
 
     bool alice_continue_ready = false;
     bool bob_continue_ready = false;
-    bool server_is_rolling_back = false; // NEW: Prevents duplicate rollbacks
+    bool server_is_rolling_back = false; // Prevents duplicate rollbacks
+
+    std::string secret_message;
+    std::vector<int> bit_stream;         // The message converted to 0s and 1s
+    std::vector<int> decoded_bit_stream; // Bob's incoming bits
+    int required_purified_pairs;         // Calculated based on message length
+    
+    // Storage for qubits that have passed purification
+    std::vector<int> stored_purified_qubit_seqs; 
+    
+    // QSDC Decoding Buffer at Bob
+    std::map<int, int> alice_bsm_results; 
+
+    // New internal methods
+    void setMessage();
+    void sendMessageSetup();
+    void encodeAndPerformQSDC();
+    void decodeQSDC(int group_index, int alice_bsm);
+
     
     // Aux functions
     void repeatQubit(int dst, quisp::modules::StationaryQubit* entangled_qubit);
@@ -150,6 +170,27 @@ bool is_alice       = false;
     void sendClassicalMessage(int dest_addr, const char* msg_type, const char* msg_name, int seq_num  = -1, int meas_res = -1);
     void attemptPurification();
     void handleBSMResult(int seq_num, int bsm_outcome);
+
+    // New Auxiliary Dispatch Handlers
+    void processMessageSetup(quisp::messages::QSDCSynAck* pkt);
+    void processQSDCPrepare(omnetpp::cMessage* msg);
+    void processCommStart(omnetpp::cMessage* msg);
+    
+    // FSM State Handlers
+    void processCommReady(quisp::messages::QSDCSynAck* pkt);
+    void processCommSync(quisp::messages::QSDCSynAck* pkt);
+    void processCommAck(quisp::messages::QSDCSynAck* pkt);
+    void processCommEnd(quisp::messages::QSDCSynAck* pkt);
+    
+    // Qubit distribution and purification FSM Handlers
+    void processQubitSync(quisp::messages::QSDCSynAck* pkt);
+    void processQubitAck(quisp::messages::QSDCSynAck* pkt);
+    void processPurifyResult(quisp::messages::QSDCSynAck* pkt);
+    
+    // ARQ (Automatic Repeat reQuest) Handlers
+    void processQubitError(quisp::messages::QSDCSynAck* pkt);
+    void processQubitDiscard(quisp::messages::QSDCSynAck* pkt);
+    void processQubitContinue(quisp::messages::QSDCSynAck* pkt);
     
     // OMNeT specifics
     void initialize() override;
