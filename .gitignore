@@ -627,3 +627,5 @@ FodyWeavers.xsd
 *.sln.iml
 
 
+.qtenvrc
+.qtenvrc
