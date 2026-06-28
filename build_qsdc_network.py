@@ -3,17 +3,17 @@ import os
 def generate_qsdc_files(message, num_left, num_right, ned_filename="./quisp/networks/qsdc_network.ned", ini_filename="./quisp/simulations/qsdc_network.ini"):
     """
     Generates QuISP NED and INI files for a QSDC network with a variable 
-    number of repeaters between Alice-Server and Server-Bob.
+    number of repeaters between Source-Server and Server-Target.
     """
 
 
     # 1. Construct the Ordered Node Chain
     nodes = []
-    nodes.append({"name": "alice", "type": "EndNode", "addr": 0, "icon": "COMP"})
+    nodes.append({"name": "source", "type": "EndNode", "addr": 0, "icon": "COMP"})
     
     repeater_index = 0
     
-    # Left Repeaters (Alice -> Server)
+    # Left Repeaters (Source -> Server)
     for _ in range(num_left):
         nodes.append({
             "name": f"BSArepeater{repeater_index}", 
@@ -26,7 +26,7 @@ def generate_qsdc_files(message, num_left, num_right, ned_filename="./quisp/netw
     # Server
     nodes.append({"name": "server", "type": "QSDCServer", "addr": 2, "icon": "EPPS"})
     
-    # Right Repeaters (Server -> Bob)
+    # Right Repeaters (Server -> Target)
     for _ in range(num_right):
         nodes.append({
             "name": f"BSArepeater{repeater_index}", 
@@ -36,8 +36,8 @@ def generate_qsdc_files(message, num_left, num_right, ned_filename="./quisp/netw
         })
         repeater_index += 1
         
-    # Bob
-    nodes.append({"name": "bob", "type": "EndNode", "addr": 4, "icon": "COMP"})
+    # Target
+    nodes.append({"name": "target", "type": "EndNode", "addr": 4, "icon": "COMP"})
 
     # 2. Build the NED File Content
     total_nodes = len(nodes)
@@ -119,58 +119,58 @@ sim-time-limit = 10s
 *.logger.log_filename = "qsdc_starter.log"
 
 # === Payload and Phase Error Rates ===
-*.alice.app.payload = "hello world"
-*.alice.app.phase1_max_error_rate = 0.1
-*.alice.app.phase2_max_error_rate = 0.1
+*.source.app.payload = "hello world"
+*.source.app.phase1_max_error_rate = 0.1
+*.source.app.phase2_max_error_rate = 0.1
 
 **.buffers = 256 
 
 **.qnic*.num_buffer = 256
 **.qnic_r*.num_buffer = 256
 
-*.alice.app.expected_bsms = 1
-*.bob.app.expected_bsms = 1
+*.source.app.expected_bsms = 1
+*.target.app.expected_bsms = 1
 
-**.alice.app.secret_message = "''' + message + '''"
+**.source.app.secret_message = "''' + message + '''"
 
 *.requestedPairs = 256
-*.alice.app.number_of_bellpair = 256
+*.source.app.number_of_bellpair = 256
 *.server.app.number_of_bellpair = 5
 *.BSArepeater*.app.number_of_bellpair = 5
-*.bob.app.number_of_bellpair = 5
-*.alice.app.min_pairs_to_start = 256
+*.target.app.number_of_bellpair = 5
+*.source.app.min_pairs_to_start = 256
 
 # === Phase 1 Configuration ===
-*.alice.app.sample_target = 64
-*.alice.app.sample_block_size = 8
+*.source.app.sample_target = 64
+*.source.app.sample_block_size = 8
 
 # === Phase 2 Configuration ===
-*.alice.app.bell_sample_target = 64
-*.alice.app.bell_block_size = 8
+*.source.app.bell_sample_target = 64
+*.source.app.bell_block_size = 8
 
 # === Eve Configuration ===
-*.alice.app.eve_enabled = true
-*.alice.app.eve_intercept_probability = 0.25
+*.source.app.eve_enabled = true
+*.source.app.eve_intercept_probability = 0.25
 
 # === Timings and Protocol State ===
 **.EndToEndConnection = true
 **.initial_notification_timing_buffer = 0s
 
 # INI topological mapping
-*.alice.app.is_alice = true
-*.bob.app.is_bob = true
+*.source.app.is_alice = true
+*.target.app.is_bob = true
 *.BSArepeater*.app.is_repeater = true
 *.BSArepeater*.app.burn_count = 0
-*.bob.app.burn_count = 0
+*.target.app.burn_count = 0
 *.server.app.burn_count = 0
 *.server.app.is_server = true
 *.server.app.is_test = true
 
-*.alice.app.start_delay = 50us
-*.alice.app.poll_interval = 10us
-*.alice.app.sample_interval = 10us
-*.alice.app.expect_anti = false
-*.alice.app.burn_count = 0
+*.source.app.start_delay = 50us
+*.source.app.poll_interval = 10us
+*.source.app.sample_interval = 10us
+*.source.app.expect_anti = false
+*.source.app.burn_count = 0
 
 # === Hardware / Error Modeling ===
 **.qrsa.hm.link_tomography = false
@@ -216,14 +216,14 @@ seed-set = ${repetition}
         f_ini.write(ini_str)
         
     print(f"[+] Successfully generated topology:")
-    print(f"    - {num_left} repeaters (Alice <-> Server)")
-    print(f"    - {num_right} repeaters (Server <-> Bob)")
+    print(f"    - {num_left} repeaters (Source <-> Server)")
+    print(f"    - {num_right} repeaters (Server <-> Target)")
     print(f"    - Output NED: {ned_filename}")
     print(f"    - Output INI: {ini_filename}")
 
 
 if __name__ == "__main__":
-    NUM_REPEATERS_ALICE_SERVER = 4
-    NUM_REPEATERS_SERVER_BOB = 2
+    NUM_REPEATERS_SOURCE_SERVER = 3
+    NUM_REPEATERS_SERVER_TARGET = 3
     MESSAGE = "python"
-    generate_qsdc_files(MESSAGE, NUM_REPEATERS_ALICE_SERVER, NUM_REPEATERS_SERVER_BOB)
+    generate_qsdc_files(MESSAGE, NUM_REPEATERS_SOURCE_SERVER, NUM_REPEATERS_SERVER_TARGET)
