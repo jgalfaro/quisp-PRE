@@ -550,46 +550,14 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
 
     int seq_num = (int)photon->par("sequence_number").longValue();
     QLOG("[ENDNODE] Received PhotonicQubit sequence: " << seq_num);
-    
+
     if (is_source || is_target) {
-        // This pointer still belongs to the Repeater/Server
-        auto* incoming_photon_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+        auto* backend_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
 
-        // 1. Find a local hardware slot in the EndNode's QNIC to absorb the state
-        auto* qnic = getQNIC("qnic_r", 0); // Assuming EndNodes receive on qnic_r index 0
-        quisp::modules::StationaryQubit* local_memory = nullptr;
-        
-        int num_buf = qnic->par("num_buffer").intValue();
-        for (int i = 0; i < num_buf; i++) {
-            auto* sq_mod = qnic->getSubmodule("statQubit", i);
-            auto* sq = check_and_cast<quisp::modules::StationaryQubit*>(sq_mod);
-            if (!sq->isBusy() && !sq->isLocked()) {
-                sq->setBusy(); // Lock local memory
-                local_memory = sq;
-                break;
-            }
-        }
+        received_qubits[seq_num] = backend_qubit;
 
-        if (!local_memory) {
-            QLOG("[ENDNODE] FATAL: Quantum memory exhausted. Cannot absorb photon.");
-            delete photon;
-            return;
-        }
-
-        auto* local_backend_qubit = local_memory->getBackendQubitRef();
-
-        // 2. Transfer the quantum state via a SWAP gate sequence (3 CNOTs)
-        // This moves the entanglement from the Repeater's hardware into the EndNode's hardware
-        incoming_photon_qubit->gateCNOT(local_backend_qubit);
-        local_backend_qubit->gateCNOT(incoming_photon_qubit);
-        incoming_photon_qubit->gateCNOT(local_backend_qubit);
-
-        // 3. Store the LOCAL hardware reference, not the Repeater's reference
-        received_qubits[seq_num] = local_backend_qubit;
-        
-        QLOG("[ENDNODE] State absorbed into local memory. Repeater memory is now safe to free.");
     }
-    
+
     delete photon; 
 }
 
