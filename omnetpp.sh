@@ -1,5 +1,4 @@
-﻿
-OMNETPP_DIR="/home/caio/Downloads/omnetpp-6.0.3/" 
+﻿OMNETPP_DIR="$HOME/Downloads/omnetpp-6.0.3/" 
 
 cd "$OMNETPP_DIR" || {
     echo "Could not find OMNeT++ directory: $OMNETPP_DIR"

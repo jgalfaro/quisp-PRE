@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 
-OMNETPP_DIR="/home/caio/Downloads/omnetpp-6.0.3/" 
-QUISP_DIR="/home/caio/workspace/quisp-PRE/quisp"
+OMNETPP_DIR="$HOME/Downloads/omnetpp-6.0.3/" 
+QUISP_DIR="$HOME/workspace/quisp-PRE/quisp"
 
 cd "$OMNETPP_DIR" || {
     echo "Could not find OMNeT++ directory: $OMNETPP_DIR"
