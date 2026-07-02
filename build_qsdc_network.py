@@ -157,8 +157,8 @@ sim-time-limit = 10s
 **.initial_notification_timing_buffer = 0s
 
 # INI topological mapping
-*.source.app.is_alice = true
-*.target.app.is_bob = true
+*.source.app.is_source = true
+*.target.app.is_target = true
 *.BSArepeater*.app.is_repeater = true
 *.BSArepeater*.app.burn_count = 0
 *.target.app.burn_count = 0

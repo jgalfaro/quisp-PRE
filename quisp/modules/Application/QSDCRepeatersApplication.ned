@@ -4,28 +4,30 @@ package modules.Application;
 simple QSDCRepeatersApplication
 {
   parameters:
-    bool is_alice = default(false);
-    bool is_bob = default(false);
+    bool is_source = default(false);
+    bool is_target = default(false);
     bool is_repeater = default(false);
     bool is_server = default(false);
     bool is_test = default(false);
     
-    double custom_channel_loss_rate = default(0.1);
+    double custom_channel_loss_rate = default(0.0);
     double custom_measurement_error_rate = default(0.0);
     double custom_gate_error_rate = default(0.0);
+    double timeout_interval = default(0.005);
+
 
     int total_qubits_to_send = default(20);
     string secret_message = default("Hello World!");
     int expected_bsms = default(1);
     
     // Define exact routing addresses for your topology
+    int source_address = default(0);
     int server_address = default(2);
-    int alice_address = default(0);
-    int bob_address = default(4);
+    int target_address = default(4);
 
     @display("i=block/app");
     int number_of_bellpair;
-    int bob_addr = default(1);
+    int target_addr = default(1);
 
     int min_pairs_to_start = default(8);
     int sample_target = default(32);
@@ -42,7 +44,7 @@ simple QSDCRepeatersApplication
     int burn_count;
 
     double phase1_max_error_rate = default(0.1);
-	double phase2_max_error_rate = default(0.1);
+	  double phase2_max_error_rate = default(0.1);
 
     string payload = default("hello world");
 

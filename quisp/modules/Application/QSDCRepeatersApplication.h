@@ -56,8 +56,8 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
         bool apply_x = false;
         bool apply_z = false;
     };
-    bool is_alice       = false;
-    bool is_bob         = false;
+    bool is_source      = false;
+    bool is_target      = false;
     bool is_repeater    = false;
     bool is_server      = false;
     bool is_test        = false;
@@ -66,15 +66,12 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     int total_qubits_to_send = 0;
     int current_qubit_index = 0;
     
-    int server_address = 2; 
-    int alice_address = 0;
-    int bob_address = 4; // Assuming bob is 4 in your ini, update if needed.
     
     // FSM data
-    bool alice_ready = false;
-    bool bob_ready = false;
-    bool alice_received_current = false;
-    bool bob_received_current = false;
+    bool source_ready = false;
+    bool target_ready = false;
+    bool source_received_current = false;
+    bool target_received_current = false;
     
     // Async Memory and Purification Tracking
     std::map<int, quisp::backends::IQubit*> received_qubits;
@@ -82,27 +79,15 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     std::vector<int> ready_qubits;               
     std::map<int, int> my_local_measurements; // NEW: Safe map for your Z-basis results
     std::map<int, std::vector<quisp::modules::StationaryQubit*>> server_emitted_qubits;
-    std::map<int, int> buffered_alice_bsms;
+    std::map<int, int> buffered_source_bsms;
     std::map<int, PauliTracker> cumulative_corrections;
     
 
     utils::ComponentProvider provider;
-    int my_address = -1;
+    int self_address = -1;
     bool is_initiator = false;
-    
-    bool eve_enabled = false;
-    double eve_intercept_probability = 0.0;
-    unsigned long active_ruleset_id = 0;
-    bool sampling_started = false;
-    bool protocol_started = false;
-    bool bell_check_started = false;
 
-    // Phase 1: QSDC Entanglement Check
-    int bell_sample_target = 0;
-    int bell_samples_done = 0;
-    int bell_errors = 0;
-    int bell_block_size = 8;
-
+  
     bool waiting_for_sample_block = false;
     bool waiting_for_bell_block = false;
 
@@ -114,49 +99,43 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     };
     std::unordered_map<int, PendingEntCheck> pending_checks;
 
-    // Phase 2: Quantum Channel Verification
-    int burn_count = 0;
-    int burn_current = 0;
-    int min_pairs_to_start = 0;
-    int sample_target = 0;
-    int samples_done = 0;
-    int errors = 0;
-    int sample_block_size = 8;
-
-    bool alice_continue_ready = false;
-    bool bob_continue_ready = false;
+    bool source_continue_ready = false;
+    bool target_continue_ready = false;
     bool server_is_rolling_back = false; // Prevents duplicate rollbacks
 
     std::string secret_message;
     std::vector<int> bit_stream;         // The message converted to 0s and 1s
-    std::vector<int> decoded_bit_stream; // Bob's incoming bits
+    std::vector<int> decoded_bit_stream; // target's incoming bits
     int required_purified_pairs;         // Calculated based on message length
     
-    // Storage for qubits that have passed purification
     std::vector<int> stored_purified_qubit_seqs; 
     
-    // QSDC Decoding Buffer at Bob
-    std::map<int, int> alice_bsm_results; 
+    std::map<int, int> source_bsm_results; 
+    std::map<int, quisp::modules::StationaryQubit*> repeater_emitted_qubits;
+        
+    omnetpp::cMessage* qubit_reception_timeout_msg = nullptr;
+    
 
 
-    double channel_loss_rate = 0.00;
+    double channel_loss_rate = 0.0;
     double measurement_error_rate = 0.0;
     double gate_error_rate = 0.0;
 
-    // Helper for stochastic gate errors
+    int source_address   = -1;
+    int target_address   = -1;
+    int server_address   = -1;
+
     void applyDepolarizingNoise(quisp::backends::IQubit* qubit);
     
     omnetpp::cMessage* timeout_msg = nullptr;
-    double timeout_interval = 0.05;
+    double timeout_interval = 0.0;
     
-    // New internal methods
     void setMessage();
     void sendMessageSetup();
     void encodeAndPerformQSDC();
     void decodeQSDC();
     bool comm_end_received = false;
 
-    // Add under New internal methods
     void checkAndTriggerDecoding();
     
     // Aux functions
@@ -171,24 +150,23 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
     void sendClassicalMessage(int dest_addr, const char* msg_type, const char* msg_name, int seq_num  = -1, int meas_res = -1);
     void attemptPurification();
     void handleBSMResult(int seq_num, int bsm_outcome);
+    void processReceptionTimeout(omnetpp::cMessage* msg);
+    void cleanupRepeaterMemory(int seq_num);
 
-    // New Auxiliary Dispatch Handlers
     void processMessageSetup(quisp::messages::QSDCSynAck* pkt);
     void processQSDCPrepare(omnetpp::cMessage* msg);
     void processCommStart(omnetpp::cMessage* msg);
     
-    // FSM State Handlers
+  
     void processCommReady(quisp::messages::QSDCSynAck* pkt);
     void processCommSync(quisp::messages::QSDCSynAck* pkt);
     void processCommAck(quisp::messages::QSDCSynAck* pkt);
     void processCommEnd(quisp::messages::QSDCSynAck* pkt);
-    
-    // Qubit distribution and purification FSM Handlers
+ 
     void processQubitSync(quisp::messages::QSDCSynAck* pkt);
     void processQubitAck(quisp::messages::QSDCSynAck* pkt);
     void processPurifyResult(quisp::messages::QSDCSynAck* pkt);
     
-    // ARQ (Automatic Repeat reQuest) Handlers
     void processQubitError(quisp::messages::QSDCSynAck* pkt);
     void processQubitDiscard(quisp::messages::QSDCSynAck* pkt);
     void processQubitContinue(quisp::messages::QSDCSynAck* pkt);

@@ -65,7 +65,7 @@ static const char* QSDC_QUBIT_CONTINUE = "QSDC_QUBIT_CONTINUE";
 static const char* QSDC_QUBIT_ERROR = "QSDC_QUBIT_ERROR";
 static const char* QSDC_QUBIT_DISCARD = "QSDC_QUBIT_DISCARD";
 static const char* QSDC_PURIFY_RESULT = "QSDC_PURIFY_RESULT";
-static const char* QSDC_ALICE_BSM = "QSDC_ALICE_BSM";
+static const char* QSDC_SOURCE_BSM = "QSDC_SOURCE_BSM";
 
 
 
@@ -79,19 +79,28 @@ void QSDCRepeatersApplication::initialize() {
 
     initializeLogger(provider);
 
-    my_address = provider.getNodeAddr();
+    self_address = provider.getNodeAddr();
 
     auto* qnode = provider.getQNode();
     if (!qnode) {
         QLOG("[QSDC] No QNode found in initialize()");
         return;
     }
-
-    is_alice            = par("is_alice").boolValue();
-    is_bob              = par("is_bob").boolValue();
+    timeout_interval    = par("timeout_interval").doubleValue();
+    is_source           = par("is_source").boolValue();
+    is_target           = par("is_target").boolValue();
     is_repeater         = par("is_repeater").boolValue();
     is_server           = par("is_server").boolValue();
     is_test             = par("is_test").boolValue();
+
+    source_address      = par("source_address").intValue();
+    target_address      = par("target_address").intValue();
+    server_address      = par("server_address").intValue();
+
+    if(source_address == target_address || source_address == server_address || target_address == server_address) {
+        QLOG("[FAIL] [INIT] Failed while getting network addresses");
+        return;
+    }
 
     channel_loss_rate       = par("custom_channel_loss_rate").doubleValue();
     measurement_error_rate  = par("custom_measurement_error_rate").doubleValue();
@@ -104,14 +113,14 @@ void QSDCRepeatersApplication::initialize() {
         total_qubits_to_send = 20;
     }
 
-    if (is_alice) {
+    if (is_source) {
         scheduleAt(simTime(), new cMessage(SELF_QSDC_DEFINE_MESSAGE));
     }
 }
 
 void QSDCRepeatersApplication::setMessage() {
     secret_message = par("secret_message").stdstringValue();
-    QLOG("[ALICE] Secret Message defined: " << secret_message);
+    QLOG("[SOURCE] Secret Message defined: " << secret_message);
 
     bit_stream.clear();
     for (char c : secret_message) {
@@ -125,14 +134,14 @@ void QSDCRepeatersApplication::setMessage() {
 
     int required_raw_pairs = required_purified_pairs * 2; 
 
-    QLOG("[ALICE] Bits: " << bit_stream.size() << " | Req Purified Pairs: " << required_purified_pairs << " | Req Raw Pairs: " << required_raw_pairs);
+    QLOG("[SOURCE] Bits: " << bit_stream.size() << " | Req Purified Pairs: " << required_purified_pairs << " | Req Raw Pairs: " << required_raw_pairs);
 
 
     auto* setup_msg = new QSDCSynAck(QSDC_MESSAGE_SETUP);
-    setup_msg->setSrcAddr(my_address);
-    setup_msg->setDestAddr(2); 
+    setup_msg->setSrcAddr(self_address);
+    setup_msg->setDestAddr(server_address); 
     setup_msg->setSequenceNum(required_raw_pairs);
-    setup_msg->setFromNode("alice");
+    setup_msg->setFromNode("source");
     send(setup_msg, "toRouter");
 }
 
@@ -140,10 +149,10 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
     QLOG("[SERVER] Emitting Purification Batch: Target Qubit " << current_qubit_index << " & Source Qubit " << current_qubit_index + 1);
     
     // Reset flags for the next round
-    alice_received_current = false;
-    bob_received_current = false;
-    alice_continue_ready = false;
-    bob_continue_ready = false;
+    source_received_current = false;
+    target_received_current = false;
+    source_continue_ready = false;
+    target_continue_ready = false;
     server_is_rolling_back = false; 
 
     // Generate TWO pairs instead of one
@@ -157,8 +166,8 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
     server_emitted_qubits[current_qubit_index + 1] = {qubit_pairs[1].qubit_1, qubit_pairs[1].qubit_2};
 
     // Send Target Qubit (Index K)
-    sendClassicalMessage(0, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index); 
-    sendClassicalMessage(4, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index);
+    sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index); 
+    sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index);
 
     auto* photon_left_0 = new quisp::messages::PhotonicQubit("SERVER_PHOTON_L_TARGET");
     photon_left_0->setQubitRef(qubit_pairs[0].qubit_1->getBackendQubitRef());
@@ -174,8 +183,8 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
     send(photon_right_0, "toQuantum_r");
 
     // Send Source Qubit (Index K + 1)
-    sendClassicalMessage(0, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1); 
-    sendClassicalMessage(4, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1);
+    sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1); 
+    sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1);
 
     auto* photon_left_1 = new quisp::messages::PhotonicQubit("SERVER_PHOTON_L_SOURCE");
     photon_left_1->setQubitRef(qubit_pairs[1].qubit_1->getBackendQubitRef());
@@ -194,12 +203,12 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
 
 void QSDCRepeatersApplication::sendClassicalMessage(int dest_addr, const char* msg_type, const char* msg_name, int seq_num, int meas_res) {
     auto* pkt = new QSDCSynAck(msg_name);
-    pkt->setSrcAddr(my_address);
+    pkt->setSrcAddr(self_address);
     pkt->setDestAddr(dest_addr);
     pkt->setName(msg_type);
     
-    if (is_alice) pkt->setFromNode("alice");
-    else if (is_bob) pkt->setFromNode("bob");
+    if (is_source) pkt->setFromNode("source");
+    else if (is_target) pkt->setFromNode("target");
     else if (is_server) pkt->setFromNode("server");
     else pkt->setFromNode("repeater");
 
@@ -207,19 +216,50 @@ void QSDCRepeatersApplication::sendClassicalMessage(int dest_addr, const char* m
 
     pkt->setMeasResult(meas_res);
     
-    QLOG("[MESSAGE] Sending ClassicalMessage " << msg_name << " to " << ((dest_addr == 0) ? "Alice" : (dest_addr == 4) ? "Bob" : "Server"));
+    QLOG("[MESSAGE] Sending ClassicalMessage " << msg_name << " to " << ((dest_addr == source_address) ? "Source" : (dest_addr == target_address) ? "Target" : "Server"));
     
     send(pkt, "toRouter");
 }
 
+void QSDCRepeatersApplication::processQubitSync(quisp::messages::QSDCSynAck* pkt) {
+    if (is_repeater) { send(pkt, "toRouter"); return; }
+    
+    int seq_num = pkt->getSequenceNum();
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Server marked Qubit Index: " << seq_num << " in transit.");
+    
+    if (is_source || is_target) {
+        // Since qubits are emitted in pairs (Target=even, Source=odd), track the base Target index
+        if (seq_num % 2 == 0) {
+            current_qubit_index = seq_num;
+        }
+    }
+    
+    // Start or reset the timeout clock
+    if (qubit_reception_timeout_msg != nullptr) {
+        cancelAndDelete(qubit_reception_timeout_msg);
+    }
+    qubit_reception_timeout_msg = new cMessage(SELF_RECEPTION_TIMEOUT);
+    scheduleAt(simTime() + timeout_interval, qubit_reception_timeout_msg);
+    
+    delete pkt;
+}
 
 
+void QSDCRepeatersApplication::processReceptionTimeout(omnetpp::cMessage* msg) {
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] FATAL: Timeout waiting for Qubits or Purification results.");
+    
+    // Alert the Server to discard and roll back the current sequence
+    sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", current_qubit_index);
+    
+    qubit_reception_timeout_msg = nullptr;
+    delete msg;
+}
 
 void QSDCRepeatersApplication::protocolInit() {
     // override the standard connection manager for testing the physical layer swap
     if (is_initiator) {
-        QLOG("[QSDC Alice] Bypassing Connection Manager for direct Server test.");
-        // delay long enough for Server to generate, Repeater to swap, and Bob to apply corrections
+        QLOG("[QSDC Source] Bypassing Connection Manager for direct Server test.");
+        // delay long enough for Server to generate, Repeater to swap, and Target to apply corrections
         scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_WAIT_FOR_PAIRS));
     }
 }
@@ -365,7 +405,7 @@ void QSDCRepeatersApplication::measureBellStateAndSend(quisp::backends::IQubit* 
 
     if(dst_addr != -1) {
         QSDCBSMResult* bsm_packet = new QSDCBSMResult("BSM_Announcement");
-        bsm_packet->setSrcAddr(my_address);
+        bsm_packet->setSrcAddr(self_address);
         bsm_packet->setDestAddr(dst_addr); 
         bsm_packet->setBsmOutcome(bsm_outcome);
         bsm_packet->setSequenceNum(seq_num);
@@ -401,7 +441,7 @@ void QSDCRepeatersApplication::handleBSMResult(int seq_num, int bsm_outcome) {
     
     bsm_arrival_counts[seq_num]++;
     
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Received BSM for Qubit " << seq_num 
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Received BSM for Qubit " << seq_num 
          << " | Progress: " << bsm_arrival_counts[seq_num] << "/" << expected_bsms_count);
     
     int target_bsm_count = (expected_bsms_count > 0) ? expected_bsms_count : par("expected_bsms").intValue();
@@ -413,7 +453,7 @@ void QSDCRepeatersApplication::handleBSMResult(int seq_num, int bsm_outcome) {
         if (cumulative_corrections[seq_num].apply_z) { qubit->gateZ(); correction_applied += "Z "; }
         if (correction_applied == "") { correction_applied = "I (None)"; }
 
-        QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] All BSMs received for Qubit " << seq_num 
+        QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] All BSMs received for Qubit " << seq_num 
              << ". Applying cumulative quantum frame correction: " << correction_applied);
         
         cumulative_corrections.erase(seq_num);
@@ -425,7 +465,7 @@ void QSDCRepeatersApplication::handleBSMResult(int seq_num, int bsm_outcome) {
 
 /*  QNIC = Quantum Network Interface Card :
 *
-*   Alice and Bob both will use QNIC as a Receiver (qnic_r)
+*   Source and Target both will use QNIC as a Receiver (qnic_r)
 *   Server will also use the QNIC as a Emitter (qnic)
 *   Repeater will use both
 *
@@ -446,7 +486,7 @@ omnetpp::cModule* QSDCRepeatersApplication::getQNIC(const char* qnic_type, int q
 
 void QSDCRepeatersApplication::attemptPurification() {
     if (ready_qubits.size() < 2) {
-        QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Only " << ready_qubits.size() << " qubit(s) ready. Waiting for a complete pair.");
+        QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Only " << ready_qubits.size() << " qubit(s) ready. Waiting for a complete pair.");
         return;
     }
 
@@ -465,7 +505,7 @@ void QSDCRepeatersApplication::attemptPurification() {
     }
 
     if (target_seq == -1) {
-        QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Ready queue has qubits, but no matching Target/Source pair. Waiting.");
+        QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Ready queue has qubits, but no matching Target/Source pair. Waiting.");
         return;
     }
 
@@ -476,9 +516,9 @@ void QSDCRepeatersApplication::attemptPurification() {
     auto* target_qubit = received_qubits[target_seq];
     auto* source_qubit = received_qubits[source_seq];
 
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Executing Purification. Target: " << target_seq << ", Source: " << source_seq);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Executing Purification. Target: " << target_seq << ", Source: " << source_seq);
 
-    if (is_alice) {
+    if (is_source) {
         target_qubit->gateX(); target_qubit->gateZ();
         source_qubit->gateX(); source_qubit->gateZ();
     }
@@ -491,12 +531,12 @@ void QSDCRepeatersApplication::attemptPurification() {
     int meas_res = eigenToInt(source_qubit->measureZ());
     
     my_local_measurements[target_seq] = meas_res; 
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Z-Measurement Result for Target Qubit " << target_seq << ": " << meas_res);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Z-Measurement Result for Target Qubit " << target_seq << ": " << meas_res);
 
     source_qubit->setFree(); 
     received_qubits.erase(source_seq); 
 
-    int partner_address = is_alice ? 4 : 0; 
+    int partner_address = is_source ? target_address : source_address;  
     sendClassicalMessage(partner_address, "QSDC_PURIFY_RESULT", "Purify_Result", target_seq, meas_res);
 }
 
@@ -511,11 +551,43 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
     int seq_num = (int)photon->par("sequence_number").longValue();
     QLOG("[ENDNODE] Received PhotonicQubit sequence: " << seq_num);
     
-    if (is_alice || is_bob) {
-        auto* backend_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+    if (is_source || is_target) {
+        // This pointer still belongs to the Repeater/Server
+        auto* incoming_photon_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
 
-        received_qubits[seq_num] = backend_qubit;
-    
+        // 1. Find a local hardware slot in the EndNode's QNIC to absorb the state
+        auto* qnic = getQNIC("qnic_r", 0); // Assuming EndNodes receive on qnic_r index 0
+        quisp::modules::StationaryQubit* local_memory = nullptr;
+        
+        int num_buf = qnic->par("num_buffer").intValue();
+        for (int i = 0; i < num_buf; i++) {
+            auto* sq_mod = qnic->getSubmodule("statQubit", i);
+            auto* sq = check_and_cast<quisp::modules::StationaryQubit*>(sq_mod);
+            if (!sq->isBusy() && !sq->isLocked()) {
+                sq->setBusy(); // Lock local memory
+                local_memory = sq;
+                break;
+            }
+        }
+
+        if (!local_memory) {
+            QLOG("[ENDNODE] FATAL: Quantum memory exhausted. Cannot absorb photon.");
+            delete photon;
+            return;
+        }
+
+        auto* local_backend_qubit = local_memory->getBackendQubitRef();
+
+        // 2. Transfer the quantum state via a SWAP gate sequence (3 CNOTs)
+        // This moves the entanglement from the Repeater's hardware into the EndNode's hardware
+        incoming_photon_qubit->gateCNOT(local_backend_qubit);
+        local_backend_qubit->gateCNOT(incoming_photon_qubit);
+        incoming_photon_qubit->gateCNOT(local_backend_qubit);
+
+        // 3. Store the LOCAL hardware reference, not the Repeater's reference
+        received_qubits[seq_num] = local_backend_qubit;
+        
+        QLOG("[ENDNODE] State absorbed into local memory. Repeater memory is now safe to free.");
     }
     
     delete photon; 
@@ -525,7 +597,7 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
     if (dblrand() < channel_loss_rate) {
         QLOG("[ERROR INJECTION] Photon " << photon->par("sequence_number").longValue() << " lost in channel.");
         delete photon;
-        return; // Halt processing, simulating erasure
+        return; 
     }
 
     QLOG("[TEST] Processing Photon to perform the Entanglement Swap...");
@@ -544,23 +616,38 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
 
     auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
 
-    int dst_addr = (photon_direction == "left") ? par("alice_address").intValue() : par("bob_address").intValue();
+    int dst_addr = (photon_direction == "left") ? par("source_address").intValue() : par("target_address").intValue();
     measureBellStateAndSend(incoming_qubit, local_half, dst_addr, seq_num);
 
     local_half->setFree(true);
 
     auto* next_photon = new quisp::messages::PhotonicQubit("FORWARDED_PHOTON");
     next_photon->setQubitRef(remote_half->getBackendQubitRef());
-    next_photon->addPar("src_addr") = my_address;
+    next_photon->addPar("src_addr") = self_address;
     next_photon->addPar("qubit_index") = new_pairs[0].qi_2;
     next_photon->addPar("sequence_number") = seq_num;
     next_photon->addPar("direction") = photon_direction.c_str();
+    
+    if (repeater_emitted_qubits.find(seq_num) != repeater_emitted_qubits.end()) {
+        QLOG("[REPEATER] WARNING: Stale memory detected for sequence " << seq_num << ". Forcing lock release before overwrite.");
+        repeater_emitted_qubits[seq_num]->setFree(true);
+    }
+    
+    repeater_emitted_qubits[seq_num] = remote_half;
+
     if (photon_direction == "left") send(next_photon, "toQuantum_l");
     if (photon_direction == "right") send(next_photon, "toQuantum_r");
     
     delete photon;
 }
 
+void QSDCRepeatersApplication::cleanupRepeaterMemory(int seq_num) {
+    if (repeater_emitted_qubits.find(seq_num) != repeater_emitted_qubits.end()) {
+        repeater_emitted_qubits[seq_num]->setFree(true);
+        repeater_emitted_qubits.erase(seq_num);
+        QLOG("[REPEATER] Quantum memory freed for sequence: " << seq_num);
+    }
+}
 
 // Utility mapper for eigenvalues
 int QSDCRepeatersApplication::eigenToInt(quisp::backends::abstract::EigenvalueResult r) {
@@ -609,11 +696,11 @@ void QSDCRepeatersApplication::encodeAndPerformQSDC() {
         // Encode BSM result (0: ++, 1: +-, 2: -+, 3: --)
         int bsm_outcome = (z1 == -1 ? 2 : 0) + (z2 == -1 ? 1 : 0);
         
-        QLOG("[ALICE] QSDC Group " << (i/2) << " Encoded bits: " << bit1 << bit2 << " | BSM Outcome: " << bsm_outcome);
+        QLOG("[SOURCE] QSDC Group " << (i/2) << " Encoded bits: " << bit1 << bit2 << " | BSM Outcome: " << bsm_outcome);
         
-        auto* qsdc_msg = new QSDCBSMResult(QSDC_ALICE_BSM);
-        qsdc_msg->setSrcAddr(my_address);
-        qsdc_msg->setDestAddr(4); // Bob
+        auto* qsdc_msg = new QSDCBSMResult(QSDC_SOURCE_BSM);
+        qsdc_msg->setSrcAddr(self_address);
+        qsdc_msg->setDestAddr(target_address); // Target
         qsdc_msg->setSequenceNum(i / 2); // Group Index
         qsdc_msg->setBsmOutcome(bsm_outcome);
         send(qsdc_msg, "toRouter");
@@ -625,15 +712,15 @@ void QSDCRepeatersApplication::encodeAndPerformQSDC() {
 
 
 void QSDCRepeatersApplication::decodeQSDC() {
-    QLOG("[BOB] Starting Deterministic Batch Decoding in decodeQSDC().");
+    QLOG("[TARGET] Starting Deterministic Batch Decoding in decodeQSDC().");
 
     std::sort(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end());
     
     decoded_bit_stream.clear();
-    decoded_bit_stream.resize(buffered_alice_bsms.size() * 2);
+    decoded_bit_stream.resize(buffered_source_bsms.size() * 2);
 
     // 2. Decode using deterministic grouping
-    for (auto const& [group_index, alice_bsm] : buffered_alice_bsms) {
+    for (auto const& [group_index, source_bsm] : buffered_source_bsms) {
         int q1_seq = stored_purified_qubit_seqs[group_index * 2];
         int q2_seq = stored_purified_qubit_seqs[group_index * 2 + 1];
         
@@ -645,9 +732,9 @@ void QSDCRepeatersApplication::decodeQSDC() {
         
         int z1 = eigenToInt(qubit_1->measureZ());
         int z2 = eigenToInt(qubit_2->measureZ());
-        int bob_bsm = (z1 == -1 ? 2 : 0) + (z2 == -1 ? 1 : 0);
+        int target_bsm = (z1 == -1 ? 2 : 0) + (z2 == -1 ? 1 : 0);
         
-        int xor_val = alice_bsm ^ bob_bsm; 
+        int xor_val = source_bsm ^ target_bsm; 
         int bit1 = 0, bit2 = 0;
         
         if (xor_val == 0)      { bit1 = 0; bit2 = 0; } // I gate
@@ -672,7 +759,7 @@ void QSDCRepeatersApplication::decodeQSDC() {
         final_message += c;
     }
     
-    QLOG("[BOB] FINAL RECONSTRUCTED MESSAGE: " << final_message);
+    QLOG("[TARGET] FINAL RECONSTRUCTED MESSAGE: " << final_message);
 }
 
 void QSDCRepeatersApplication::checkAndTriggerDecoding() {
@@ -680,11 +767,11 @@ void QSDCRepeatersApplication::checkAndTriggerDecoding() {
 
     size_t expected_groups = stored_purified_qubit_seqs.size() / 2;
     
-    if (buffered_alice_bsms.size() == expected_groups && expected_groups > 0) {
+    if (buffered_source_bsms.size() == expected_groups && expected_groups > 0) {
         decodeQSDC();
     } else {
-        QLOG("[BOB] COMM_END received, but waiting for Alice's encoding BSMs. Progress: " 
-             << buffered_alice_bsms.size() << " / " << expected_groups);
+        QLOG("[TARGET] COMM_END received, but waiting for Source's encoding BSMs. Progress: " 
+             << buffered_source_bsms.size() << " / " << expected_groups);
     }
 }
 
@@ -692,7 +779,7 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
     if (auto* photon = dynamic_cast<quisp::messages::PhotonicQubit*>(msg)) {
         if (is_repeater) {
             handleIncomingPhotonAtRepeater(photon);
-        } else if (is_alice || is_bob) {
+        } else if (is_source || is_target) {
             handleIncomingPhotonAtEndNode(photon);
         } else {
             delete photon;
@@ -707,9 +794,9 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
             QLOG("[REPEATER] Intercepted Hop Probe. Incremented counter to: " << hop_msg->getQSDCHopCount());
             send(hop_msg, "toRouter");
         } 
-        else if (is_alice || is_bob) {
+        else if (is_source || is_target) {
             expected_bsms_count = hop_msg->getQSDCHopCount();
-            QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Hop Probe arrived! Dynamic Expected BSMs set to: " << expected_bsms_count);
+            QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Hop Probe arrived! Dynamic Expected BSMs set to: " << expected_bsms_count);
             sendClassicalMessage(hop_msg->getSrcAddr(), "QSDC_COMM_READY", "QSDC_COMM_READY");
             delete hop_msg;
         }
@@ -718,15 +805,14 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
 
     if (auto* bsm_msg = dynamic_cast<QSDCBSMResult *>(msg)) {
         
-        if (strcmp(bsm_msg->getName(), QSDC_ALICE_BSM) == 0) {
+        if (strcmp(bsm_msg->getName(), QSDC_SOURCE_BSM) == 0) {
             // Buffer the BSMs
-            buffered_alice_bsms[bsm_msg->getSequenceNum()] = bsm_msg->getBsmOutcome();
+            buffered_source_bsms[bsm_msg->getSequenceNum()] = bsm_msg->getBsmOutcome();
             
-            // --- NEW: Check if this was the final missing piece ---
-            if (is_bob) {
+            if (is_target) {
                 checkAndTriggerDecoding();
             }
-            // ------------------------------------------------------
+
         } else {
             handleBSMResult(bsm_msg->getSequenceNum(), bsm_msg->getBsmOutcome());
         }
@@ -746,14 +832,14 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
         return;
     }
     if (strcmp(msg->getName(), SELF_QSDC_DEFINE_MESSAGE) == 0) {
-        // Triggered at initialization by Alice
+        // Triggered at initialization by Source
         setMessage();
         delete msg;
         return;
     }
 
     if (strcmp(msg->getName(), SELF_QSDC_ENCODE_MESSAGE) == 0) {
-        // Triggered by Alice once all required pairs are purified
+        // Triggered by Source once all required pairs are purified
         encodeAndPerformQSDC();
         delete msg;
         return;
@@ -766,6 +852,11 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
     
     if (strcmp(msg->getName(), QSDC_COMM_START) == 0) {
         processCommStart(msg);
+        return;
+    }
+
+    if (strcmp(msg->getName(), SELF_RECEPTION_TIMEOUT) == 0) {
+        processReceptionTimeout(msg);
         return;
     }
 
@@ -800,28 +891,28 @@ void QSDCRepeatersApplication::handleMessage(cMessage *msg) {
 void QSDCRepeatersApplication::processMessageSetup(quisp::messages::QSDCSynAck* pkt) {
     if (is_server) {
         total_qubits_to_send = pkt->getSequenceNum();
-        int dynamic_alice_address = pkt->getSrcAddr(); 
+        int dynamic_source_address = pkt->getSrcAddr(); 
         
         // Initialize the Probes
-        auto* probe_alice = new QSDCHopMessage("QSDC_COMM_START");
-        probe_alice->setSrcAddr(my_address);
-        probe_alice->setDestAddr(dynamic_alice_address); 
-        probe_alice->setQSDCHopCount(0);
-        send(probe_alice, "toRouter");
+        auto* probe_source = new QSDCHopMessage("QSDC_COMM_START");
+        probe_source->setSrcAddr(self_address);
+        probe_source->setDestAddr(dynamic_source_address); 
+        probe_source->setQSDCHopCount(0);
+        send(probe_source, "toRouter");
 
-        auto* probe_bob = new QSDCHopMessage("QSDC_COMM_START");
-        probe_bob->setSrcAddr(my_address);
-        probe_bob->setDestAddr(bob_address); // Ensure Bob's address is known dynamically as well
-        probe_bob->setQSDCHopCount(0);
-        send(probe_bob, "toRouter");
+        auto* probe_target = new QSDCHopMessage("QSDC_COMM_START");
+        probe_target->setSrcAddr(self_address);
+        probe_target->setDestAddr(target_address); // Ensure Target's address is known dynamically as well
+        probe_target->setQSDCHopCount(0);
+        send(probe_target, "toRouter");
     }
     delete pkt;
 }
 
 void QSDCRepeatersApplication::processQSDCPrepare(omnetpp::cMessage* msg) {
     QLOG("[SERVER] Initializing QSDC Protocol. Requesting EndNode Readiness.");
-    sendClassicalMessage(0, QSDC_COMM_START, "QSDC_COMM_START"); 
-    sendClassicalMessage(4, QSDC_COMM_START, "QSDC_COMM_START");
+    sendClassicalMessage(source_address, QSDC_COMM_START, "QSDC_COMM_START"); 
+    sendClassicalMessage(target_address, QSDC_COMM_START, "QSDC_COMM_START");
     delete msg;
 }
 
@@ -839,11 +930,11 @@ void QSDCRepeatersApplication::processCommStart(omnetpp::cMessage* msg) {
         return;
     }
     
-    // Logic for Alice and Bob
+    // Logic for Source and Target
     expected_bsms_count = pkt->getExpectedBSMs();
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Received Start. Dynamic Expected BSMs set to: " << expected_bsms_count);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Received Start. Dynamic Expected BSMs set to: " << expected_bsms_count);
     
-    sendClassicalMessage(2, QSDC_COMM_READY, "QSDC_COMM_READY"); 
+    sendClassicalMessage(server_address, QSDC_COMM_READY, "QSDC_COMM_READY"); 
     delete msg;
 }
 
@@ -852,28 +943,29 @@ void QSDCRepeatersApplication::processCommSync(quisp::messages::QSDCSynAck* pkt)
         send(pkt, "toRouter");
         return;
     }
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Session Synced. Buffer cleared. Sending ACK.");
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Session Synced. Buffer cleared. Sending ACK.");
     received_qubits.clear(); 
     ready_qubits.clear();
     bsm_arrival_counts.clear();
     
-    if (is_bob) {
+    if (is_target) {
         decoded_bit_stream.clear();
     }
     
     // Tell the Server we are safely cleared and ready
-    sendClassicalMessage(2, QSDC_COMM_ACK, "QSDC_COMM_ACK"); // 2 is Server
+    sendClassicalMessage(server_address, QSDC_COMM_ACK, "QSDC_COMM_ACK"); // 2 is Server
     delete pkt;
 }
 
 void QSDCRepeatersApplication::processCommEnd(quisp::messages::QSDCSynAck* pkt) {
     if (is_repeater) {
+        repeater_emitted_qubits.clear();
         send(pkt, "toRouter");
         return;
     }
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] PROTOCOL COMPLETE! End Signal Received.");
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] PROTOCOL COMPLETE! End Signal Received.");
 
-    if (is_bob) {
+    if (is_target) {
         comm_end_received = true;
         checkAndTriggerDecoding(); 
     }
@@ -885,18 +977,18 @@ void QSDCRepeatersApplication::processCommReady(quisp::messages::QSDCSynAck* pkt
     if (is_repeater) { send(pkt, "toRouter"); return; }
     if (is_server) {
         std::string from = pkt->getFromNode();
-        if (from == "alice") alice_ready = true;
-        if (from == "bob") bob_ready = true;
+        if (from == "source") source_ready = true;
+        if (from == "target") target_ready = true;
 
-        if (alice_ready && bob_ready) {
+        if (source_ready && target_ready) {
             QLOG("[SERVER] Both nodes ready. Sending Sync to clear buffers.");
             
             // Reset flags for the upcoming ACK phase
-            alice_ready = false; 
-            bob_ready = false;
+            source_ready = false; 
+            target_ready = false;
             
-            sendClassicalMessage(0, QSDC_COMM_SYNC, "QSDC_COMM_SYNC"); 
-            sendClassicalMessage(4, QSDC_COMM_SYNC, "QSDC_COMM_SYNC");
+            sendClassicalMessage(source_address, QSDC_COMM_SYNC, "QSDC_COMM_SYNC"); 
+            sendClassicalMessage(target_address, QSDC_COMM_SYNC, "QSDC_COMM_SYNC");
         }
     }
     delete pkt;
@@ -907,10 +999,10 @@ void QSDCRepeatersApplication::processCommAck(quisp::messages::QSDCSynAck* pkt) 
     // Initialization Phase 2
     if (is_server) {
         std::string from = pkt->getFromNode();
-        if (from == "alice") alice_ready = true;
-        if (from == "bob") bob_ready = true;
+        if (from == "source") source_ready = true;
+        if (from == "target") target_ready = true;
 
-        if (alice_ready && bob_ready) {
+        if (source_ready && target_ready) {
             QLOG("[SERVER] EndNodes synced. Starting Qubit Emission FSM.");
             current_qubit_index = 0;
             sendNextQubitPair();
@@ -920,24 +1012,27 @@ void QSDCRepeatersApplication::processCommAck(quisp::messages::QSDCSynAck* pkt) 
 }
 
 void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt) {
-    if (is_repeater) { send(pkt, "toRouter"); return; }
+    if (is_repeater) { 
+        send(pkt, "toRouter"); 
+        return; 
+    }
     if (is_server) {
         int rcv_index = pkt->getSequenceNum();
         std::string from = pkt->getFromNode();
         
-        if (rcv_index == current_qubit_index) { // Alice/Bob ACK the Target index
-            if (from == "alice") alice_received_current = true;
-            if (from == "bob") bob_received_current = true;
+        if (rcv_index == current_qubit_index) { // Source/Target ACK the Target index
+            if (from == "source") source_received_current = true;
+            if (from == "target") target_received_current = true;
 
-            if (alice_received_current && bob_received_current) {
+            if (source_received_current && target_received_current) {
                 QLOG("[SERVER] Target Qubit " << current_qubit_index << " Successfully Purified & Synchronized!");
                 
                 if (server_emitted_qubits.find(current_qubit_index) != server_emitted_qubits.end()) {
-                for (auto* sq : server_emitted_qubits[current_qubit_index]) sq->setFree(true);
-                for (auto* sq : server_emitted_qubits[current_qubit_index + 1]) sq->setFree(true);
-                server_emitted_qubits.erase(current_qubit_index);
-                server_emitted_qubits.erase(current_qubit_index + 1);
-    }
+                    for (auto* sq : server_emitted_qubits[current_qubit_index]) sq->setFree(true);
+                    for (auto* sq : server_emitted_qubits[current_qubit_index + 1]) sq->setFree(true);
+                    server_emitted_qubits.erase(current_qubit_index);
+                    server_emitted_qubits.erase(current_qubit_index + 1);
+                }
 
                 // advance by 2
                 current_qubit_index += 2;
@@ -946,8 +1041,8 @@ void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt)
                     sendNextQubitPair();
                 } else {
                     QLOG("[SERVER] Transmission Complete. Sending END signal.");
-                    sendClassicalMessage(0, QSDC_COMM_END, "COMM_END"); 
-                    sendClassicalMessage(4, QSDC_COMM_END, "COMM_END");
+                    sendClassicalMessage(source_address, QSDC_COMM_END, "COMM_END"); 
+                    sendClassicalMessage(target_address, QSDC_COMM_END, "COMM_END");
                 }
             }
         } 
@@ -956,6 +1051,10 @@ void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt)
 }
 
 void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* pkt) {
+    if (qubit_reception_timeout_msg != nullptr) {
+        cancelAndDelete(qubit_reception_timeout_msg);
+        qubit_reception_timeout_msg = nullptr;
+    }
     if (is_repeater) { send(pkt, "toRouter"); return; }
     
     int target_seq = pkt->getSequenceNum();
@@ -963,12 +1062,12 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
     
     // Safe Map Lookup
     int my_meas = my_local_measurements[target_seq]; 
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Comparing Purification Results. Mine: " << my_meas << ", Partner: " << partner_meas);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Comparing Purification Results. Mine: " << my_meas << ", Partner: " << partner_meas);
 
     if (my_meas == partner_meas) {
-        QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Purification SUCCESS for Qubit " << target_seq);
+        QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification SUCCESS for Qubit " << target_seq);
         
-        if (is_alice) {
+        if (is_source) {
             received_qubits[target_seq]->gateZ();
             received_qubits[target_seq]->gateX();
         }
@@ -976,16 +1075,16 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
         // store qubit
         stored_purified_qubit_seqs.push_back(target_seq);
         
-        sendClassicalMessage(2, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq); 
+        sendClassicalMessage(server_address, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq); 
         
         // Check if we have enough to start encoding
-        if (is_alice && stored_purified_qubit_seqs.size() == required_purified_pairs) {
-            QLOG("[ALICE] All required pairs purified and stored. Initiating QSDC Encoding.");
+        if (is_source && stored_purified_qubit_seqs.size() == required_purified_pairs) {
+            QLOG("[SOURCE] All required pairs purified and stored. Initiating QSDC Encoding.");
             scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_QSDC_ENCODE_MESSAGE));
         }
     } else {
-        QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Purification FAILED. Requesting Rollback.");
-        sendClassicalMessage(2, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq); 
+        QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification FAILED. Requesting Rollback.");
+        sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq); 
         
         // received_qubits[target_seq]->setFree(true);
         received_qubits.erase(target_seq);
@@ -993,12 +1092,6 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
     delete pkt;
 }
 
-void QSDCRepeatersApplication::processQubitSync(quisp::messages::QSDCSynAck* pkt) {
-    if (is_repeater) { send(pkt, "toRouter"); return; }
-    int seq_num = pkt->getSequenceNum();
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] Server marked Qubit Index: " << seq_num << " in transit.");
-    delete pkt;
-}
 
 void QSDCRepeatersApplication::processQubitError(quisp::messages::QSDCSynAck* pkt) {
     if (is_repeater) { send(pkt, "toRouter"); return; }
@@ -1013,23 +1106,32 @@ void QSDCRepeatersApplication::processQubitError(quisp::messages::QSDCSynAck* pk
                 server_emitted_qubits.erase(current_qubit_index + 1);
             }
             server_is_rolling_back = true;
-            alice_continue_ready = false;
-            bob_continue_ready = false;
+            source_continue_ready = false;
+            target_continue_ready = false;
 
-            sendClassicalMessage(0, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
-            sendClassicalMessage(4, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
+            sendClassicalMessage(source_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
+            sendClassicalMessage(target_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
         }
     }
     delete pkt;
 }
 
 void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* pkt) {
-    if (is_repeater) { send(pkt, "toRouter"); return; }
+    if (qubit_reception_timeout_msg != nullptr) {
+        cancelAndDelete(qubit_reception_timeout_msg);
+        qubit_reception_timeout_msg = nullptr;
+    }
+    if (is_repeater) { 
+        cleanupRepeaterMemory(pkt->getSequenceNum());
+        cleanupRepeaterMemory(pkt->getSequenceNum() + 1);
+        send(pkt, "toRouter"); 
+        return; 
+    }
     
     int target_index = pkt->getSequenceNum();
     int source_index = target_index + 1; // The partner qubit in the purification batch
 
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] ARQ: Discarding Batch Qubit Indices: " << target_index << " & " << source_index);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: Discarding Batch Qubit Indices: " << target_index << " & " << source_index);
     
     // 1. Clear Quantum Memory for both qubits
     if (received_qubits.find(target_index) != received_qubits.end()) received_qubits.erase(target_index);
@@ -1049,8 +1151,8 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
     my_local_measurements.erase(target_index);
     my_local_measurements.erase(source_index);
     
-    QLOG("[" << (is_alice ? "ALICE" : "BOB") << "] ARQ: State completely scrubbed. Sending CONTINUE to Server.");
-    sendClassicalMessage(2, QSDC_QUBIT_CONTINUE, "QSDC_QUBIT_CONTINUE", target_index);
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: State completely scrubbed. Sending CONTINUE to Server.");
+    sendClassicalMessage(server_address, QSDC_QUBIT_CONTINUE, "QSDC_QUBIT_CONTINUE", target_index);
     
     delete pkt;
 }
@@ -1062,10 +1164,10 @@ void QSDCRepeatersApplication::processQubitContinue(quisp::messages::QSDCSynAck*
         std::string from = pkt->getFromNode();
         
         if (cont_index == current_qubit_index) {
-            if (from == "alice") alice_continue_ready = true;
-            if (from == "bob") bob_continue_ready = true;
+            if (from == "source") source_continue_ready = true;
+            if (from == "target") target_continue_ready = true;
 
-            if (alice_continue_ready && bob_continue_ready) {
+            if (source_continue_ready && target_continue_ready) {
                 QLOG("[SERVER] ARQ: Both nodes discarded successfully. Re-emitting Qubit " << current_qubit_index);
                 sendNextQubitPair(); 
             }
