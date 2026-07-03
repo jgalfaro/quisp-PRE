@@ -544,17 +544,51 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
   }
 
   int seq_num = (int)photon->par("sequence_number").longValue();
-  QLOG("[ENDNODE] Received PhotonicQubit sequence: " << seq_num);
+  QLOG("[ENDNODE] Received PhotonicQubit sequence: " << seq_num << ". Attempting local storage.");
 
   if (is_source || is_target) {
-    auto* backend_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+    auto* qnic = getQNIC("qnic", 0); 
+    if (!qnic) {
+      QLOG("[ENDNODE] FATAL: Receiver QNIC not found!");
+      delete photon;
+      return;
+    }
 
-    received_qubits[seq_num] = backend_qubit;
+    quisp::modules::StationaryQubit* local_sq = nullptr;
+    const int num_buf = qnic->par("num_buffer").intValue();
+    
+    for (int i = 0; i < num_buf; i++) {
+      auto* sq = check_and_cast<quisp::modules::StationaryQubit*>(qnic->getSubmodule("statQubit", i));
+      if (!sq->isBusy() && !sq->isLocked()) {
+        local_sq = sq;
+        local_sq->setBusy(); // Lock local memory
+        break;
+      }
+    }
+
+    if (!local_sq) {
+      QLOG("[ENDNODE] FATAL: Out of local quantum memory. Cannot store sequence " << seq_num);
+      delete photon;
+      return;
+    }
+
+    auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+    auto* local_backend_qubit = local_sq->getBackendQubitRef();
+    // 3-CNOT SWAP Gate
+    incoming_qubit->gateCNOT(local_backend_qubit);
+    local_backend_qubit->gateCNOT(incoming_qubit);
+    incoming_qubit->gateCNOT(local_backend_qubit);
+
+    received_qubits[seq_num] = local_backend_qubit;
+    
+    local_stored_qubits[seq_num] = local_sq;
+
+    QLOG("[ENDNODE] Qubit " << seq_num << " successfully absorbed into local memory. Sending STORED ACK.");
+
   }
 
   delete photon;
 }
-
 void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::PhotonicQubit* photon) {
   if (dblrand() < channel_loss_rate) {
     QLOG("[ERROR INJECTION] Photon " << photon->par("sequence_number").longValue() << " lost in channel.");
@@ -565,23 +599,23 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
   QLOG("[REPEATER ES] Processing Photon to perform the Entanglement Swap...");
   auto new_pairs = generateEntangledPairs(1, "qnic", 1, BellState::PsiMinus);
 
-  repeater_emitted_qubits[0] = {new_pairs[0].qubit_1, new_pairs[0].qubit_2};
-
-  int seq_num = (int)photon->par("sequence_number").longValue();
-  std::string photon_direction = photon->par("direction").stringValue();
-
   if (new_pairs.empty()) {
     QLOG("[REPEATER] FATAL: Insufficient quantum memory to generate ES pair. Dropping photon.");
     delete photon;
     return;
   }
 
+  int seq_num = (int)photon->par("sequence_number").longValue();
+  std::string photon_direction = photon->par("direction").stringValue();
+
+  repeater_emitted_qubits[seq_num] = {new_pairs[0].qubit_1, new_pairs[0].qubit_2}; 
+
   auto* local_half = new_pairs[0].qubit_1;
   auto* remote_half = new_pairs[0].qubit_2;
 
   auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
-
   int dst_addr = (photon_direction == "left") ? par("source_address").intValue() : par("target_address").intValue();
+  
   measureBellStateAndSend(incoming_qubit, local_half, dst_addr, seq_num);
 
   local_half->setFree(true);
@@ -599,7 +633,19 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
   delete photon;
 }
 
-void QSDCRepeatersApplication::cleanupRepeaterMemory(int seq_num) {}
+void QSDCRepeatersApplication::cleanupRepeaterMemory() {
+  QLOG("[REPEATER CLEANUP] Cleaning all tracked repeater QNIC allocations.");
+
+  for (auto const& [seq_num, qubits] : repeater_emitted_qubits) {
+    for (auto* sq : qubits) {
+      if (sq) {
+        sq->setFree(true);
+      }
+    }
+  }
+  
+  repeater_emitted_qubits.clear();
+}
 
 // Utility mapper for eigenvalues
 int QSDCRepeatersApplication::eigenToInt(quisp::backends::abstract::EigenvalueResult r) {
@@ -819,9 +865,20 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
     return;
   }
 
+  if (auto* pkt = dynamic_cast<quisp::messages::QSDCCleanQuantumMemory*>(msg)) {
+    
+    if (is_repeater) {
+      cleanupRepeaterMemory();
+      send(pkt, "toRouter");
+      return;
+    }
+
+    delete msg;
+    return;
+  }
+
   // QSDC FSM Classical Packets
   if (auto* pkt = dynamic_cast<quisp::messages::QSDCSynAck*>(msg)) {
-
     std::string msg_type = pkt->getName();
 
     if (msg_type == QSDC_MESSAGE_SETUP)
@@ -984,16 +1041,6 @@ void QSDCRepeatersApplication::processCommAck(quisp::messages::QSDCSynAck* pkt) 
 }
 
 void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt) {
-  if (is_repeater) {
-    QLOG("[REPEATER CLEANUP] Cleaning all (2) QNICs");
-
-    for (auto* sq : repeater_emitted_qubits[0]) sq->setFree(true);
-    repeater_emitted_qubits.erase(0);
-
-    send(pkt, "toRouter");
-    return;
-  }
-
   if (is_server) {
     int rcv_index = pkt->getSequenceNum();
     std::string from = pkt->getFromNode();
@@ -1011,6 +1058,16 @@ void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt)
           server_emitted_qubits.erase(current_qubit_index);
           server_emitted_qubits.erase(current_qubit_index + 1);
         }
+
+        auto* clear_repeater_memories_source_msg = new QSDCCleanQuantumMemory(QSDC_QUBIT_DISCARD);
+        clear_repeater_memories_source_msg->setSrcAddr(self_address);
+        clear_repeater_memories_source_msg->setDestAddr(source_address);
+        send(clear_repeater_memories_source_msg, "toRouter");
+
+        auto* clear_repeater_memories_target_msg = new QSDCCleanQuantumMemory(QSDC_QUBIT_DISCARD);
+        clear_repeater_memories_target_msg->setSrcAddr(self_address);
+        clear_repeater_memories_target_msg->setDestAddr(target_address);
+        send(clear_repeater_memories_target_msg, "toRouter");
 
         // advance by 2
         current_qubit_index += 2;
@@ -1056,6 +1113,8 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
     // store qubit
     stored_purified_qubit_seqs.push_back(target_seq);
 
+
+
     sendClassicalMessage(server_address, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq);
 
     // Check if we have enough to start encoding
@@ -1092,6 +1151,16 @@ void QSDCRepeatersApplication::processQubitError(quisp::messages::QSDCSynAck* pk
       source_continue_ready = false;
       target_continue_ready = false;
 
+      auto* clear_repeater_memories_source_msg = new QSDCCleanQuantumMemory(QSDC_QUBIT_DISCARD);
+      clear_repeater_memories_source_msg->setSrcAddr(self_address);
+      clear_repeater_memories_source_msg->setDestAddr(source_address);
+      send(clear_repeater_memories_source_msg, "toRouter");
+
+      auto* clear_repeater_memories_target_msg = new QSDCCleanQuantumMemory(QSDC_QUBIT_DISCARD);
+      clear_repeater_memories_target_msg->setSrcAddr(self_address);
+      clear_repeater_memories_target_msg->setDestAddr(target_address);
+      send(clear_repeater_memories_target_msg, "toRouter");
+
       sendClassicalMessage(source_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
       sendClassicalMessage(target_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
     }
@@ -1105,24 +1174,15 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
     qubit_reception_timeout_msg = nullptr;
   }
 
-  if (is_repeater) {
-    QLOG("[REPEATER CLEANUP] Cleaning all (2) QNICs");
-
-    for (auto* sq : repeater_emitted_qubits[0]) sq->setFree(true);
-    repeater_emitted_qubits.erase(0);
-
-    send(pkt, "toRouter");
-    return;
-  }
-
-  if (is_server) {
+  // The EndNodes execute the local memory scrub
+  if (is_source || is_target) {
     int target_index = pkt->getSequenceNum();
     int source_index = target_index + 1;  // The partner qubit in the purification batch
 
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: Discarding Batch Qubit Indices: " << target_index << " & " << source_index);
 
-    if (received_qubits.find(target_index) != received_qubits.end()) received_qubits.erase(target_index);
-    if (received_qubits.find(source_index) != received_qubits.end()) received_qubits.erase(source_index);
+    cleanupLocalMemory(target_index);
+    cleanupLocalMemory(source_index);
 
     ready_qubits.erase(std::remove(ready_qubits.begin(), ready_qubits.end(), target_index), ready_qubits.end());
     ready_qubits.erase(std::remove(ready_qubits.begin(), ready_qubits.end(), source_index), ready_qubits.end());
@@ -1136,11 +1196,25 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
     my_local_measurements.erase(target_index);
     my_local_measurements.erase(source_index);
 
-    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: State completely scrubbed. Sending CONTINUE to Server.");
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: Local state scrubbed. QNIC slots freed. Sending CONTINUE to Server.");
     sendClassicalMessage(server_address, QSDC_QUBIT_CONTINUE, "QSDC_QUBIT_CONTINUE", target_index);
   }
 
   delete pkt;
+}
+
+void QSDCRepeatersApplication::cleanupLocalMemory(int seq_num){
+  if (local_stored_qubits.find(seq_num) != local_stored_qubits.end()) {
+        if (local_stored_qubits[seq_num] != nullptr) {
+          local_stored_qubits[seq_num]->setFree(true);
+        }
+        local_stored_qubits.erase(seq_num);
+      }
+      
+      if (received_qubits.find(seq_num) != received_qubits.end()) {
+        received_qubits.erase(seq_num);
+      }
+      return;
 }
 
 void QSDCRepeatersApplication::processQubitContinue(quisp::messages::QSDCSynAck* pkt) {

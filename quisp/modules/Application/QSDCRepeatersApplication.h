@@ -65,6 +65,7 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
 
   // Async Memory and Purification Tracking
   std::map<int, quisp::backends::IQubit*> received_qubits;
+  std::map<int, quisp::modules::StationaryQubit*> local_stored_qubits; // TODO: check difference
   std::map<int, int> bsm_arrival_counts;
   std::vector<int> ready_qubits;
   std::map<int, int> my_local_measurements;  // NEW: Safe map for your Z-basis results
@@ -137,7 +138,8 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   void attemptPurification();
   void handleBSMResult(int seq_num, int bsm_outcome);
   void processReceptionTimeout(omnetpp::cMessage* msg);
-  void cleanupRepeaterMemory(int seq_num);
+  void cleanupRepeaterMemory();
+  void cleanupLocalMemory(int seq_num);
 
   void processMessageSetup(quisp::messages::QSDCSynAck* pkt);
   void processQSDCPrepare(omnetpp::cMessage* msg);

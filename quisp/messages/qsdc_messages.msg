@@ -36,3 +36,5 @@ packet QSDCSynAck extends Header {
 packet QSDCHopMessage extends Header {
     int qsdc_hop_count         @setter(setQSDCHopCount)       @getter(getQSDCHopCount);
 }
+
+packet QSDCCleanQuantumMemory extends Header {}
