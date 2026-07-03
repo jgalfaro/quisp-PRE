@@ -51,7 +51,6 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   bool is_target = false;
   bool is_repeater = false;
   bool is_server = false;
-  bool is_test = false;
 
   // Protocol parameters
   int total_qubits_to_send = 0;

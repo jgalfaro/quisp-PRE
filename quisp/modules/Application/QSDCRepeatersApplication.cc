@@ -82,7 +82,6 @@ void QSDCRepeatersApplication::initialize() {
   is_target = par("is_target").boolValue();
   is_repeater = par("is_repeater").boolValue();
   is_server = par("is_server").boolValue();
-  is_test = par("is_test").boolValue();
 
   source_address = par("source_address").intValue();
   target_address = par("target_address").intValue();
