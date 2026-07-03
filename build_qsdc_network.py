@@ -6,7 +6,6 @@ def generate_qsdc_files(message, num_left, num_right, ned_filename="./quisp/netw
     number of repeaters between Source-Server and Server-Target.
     """
 
-
     # 1. Construct the Ordered Node Chain
     nodes = []
     nodes.append({"name": "source", "type": "EndNode", "addr": 0, "icon": "COMP"})
@@ -110,47 +109,23 @@ def generate_qsdc_files(message, num_left, num_right, ned_filename="./quisp/netw
         
     ned_str += "}\n"
 
-    # 3. Build the INI File Content
-    # The wildcard configurations natively support N repeaters.
+    # 3. Build the INI File Content (Updated)
     ini_str = '''[General]
 network = networks.qsdc_network
 sim-time-limit = 10s
 
 *.logger.log_filename = "qsdc_starter.log"
 
-# === Payload and Phase Error Rates ===
-*.source.app.payload = "hello world"
-*.source.app.phase1_max_error_rate = 0.1
-*.source.app.phase2_max_error_rate = 0.1
+*.server*.buffers = 4
+*.source*.buffers = 4096
+*.target*.buffers = 4096
+*.BSArepeater*.buffers = 4
 
-**.buffers = 256 
-
-**.qnic*.num_buffer = 256
-**.qnic_r*.num_buffer = 256
-
-*.source.app.expected_bsms = 1
-*.target.app.expected_bsms = 1
+**.custom_channel_loss_rate = 0
+**.custom_measurement_error_rate = 0
+**.custom_gate_error_rate = 0
 
 **.source.app.secret_message = "''' + message + '''"
-
-*.requestedPairs = 256
-*.source.app.number_of_bellpair = 256
-*.server.app.number_of_bellpair = 5
-*.BSArepeater*.app.number_of_bellpair = 5
-*.target.app.number_of_bellpair = 5
-*.source.app.min_pairs_to_start = 256
-
-# === Phase 1 Configuration ===
-*.source.app.sample_target = 64
-*.source.app.sample_block_size = 8
-
-# === Phase 2 Configuration ===
-*.source.app.bell_sample_target = 64
-*.source.app.bell_block_size = 8
-
-# === Eve Configuration ===
-*.source.app.eve_enabled = true
-*.source.app.eve_intercept_probability = 0.25
 
 # === Timings and Protocol State ===
 **.EndToEndConnection = true
@@ -160,17 +135,13 @@ sim-time-limit = 10s
 *.source.app.is_source = true
 *.target.app.is_target = true
 *.BSArepeater*.app.is_repeater = true
-*.BSArepeater*.app.burn_count = 0
-*.target.app.burn_count = 0
-*.server.app.burn_count = 0
 *.server.app.is_server = true
-*.server.app.is_test = true
 
-*.source.app.start_delay = 50us
-*.source.app.poll_interval = 10us
-*.source.app.sample_interval = 10us
-*.source.app.expect_anti = false
-*.source.app.burn_count = 0
+**.app.burn_count = 0
+**.app.start_delay = 50us
+**.app.poll_interval = 10us
+**.app.sample_interval = 10us
+**.app.expect_anti = false
 
 # === Hardware / Error Modeling ===
 **.qrsa.hm.link_tomography = false
