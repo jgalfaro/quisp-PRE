@@ -38,3 +38,7 @@ packet QSDCHopMessage extends Header {
 }
 
 packet QSDCCleanQuantumMemory extends Header {}
+packet QSDCPurificationResult extends Header {
+    int purification_result   @setter(setPurificationResult)  @getter(getPurificationResult);
+    int sequence_num         @setter(setSequenceNum)       @getter(getSequenceNum);
+}

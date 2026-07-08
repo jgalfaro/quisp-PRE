@@ -82,6 +82,22 @@ void QSDCRepeatersApplication::initialize() {
   is_target = par("is_target").boolValue();
   is_repeater = par("is_repeater").boolValue();
   is_server = par("is_server").boolValue();
+  is_eavesdropper = par("is_eavesdropper").boolValue();
+  if (is_eavesdropper) {
+    QLOG("[EAVESDROPPER] Eavesdropper activated!");
+    entanglement_attack_rate = par("entanglement_attack_rate").doubleValue();
+    
+    if (hasPar("targeted_attack_start")) {
+        targeted_attack_start = par("targeted_attack_start").intValue();
+        targeted_attack_end = par("targeted_attack_end").intValue();
+        randomized_malicious_entanglement_attack = par("randomized_malicious_entanglement_attack").boolValue();
+    }
+    
+    translateAttacks();
+  }
+  if (hasPar("binary_verification")) {
+      binary_verification = par("binary_verification").boolValue();
+  }
 
   source_address = par("source_address").intValue();
   target_address = par("target_address").intValue();
@@ -112,15 +128,34 @@ void QSDCRepeatersApplication::setMessage() {
   QLOG("[SOURCE] Secret Message defined: " << secret_message);
 
   bit_stream.clear();
-  for (char c : secret_message) {
-    for (int i = 7; i >= 0; --i) {
-      bit_stream.push_back((c >> i) & 1);
+
+  if (binary_verification) {
+    QLOG("[SOURCE] Binary Verification Mode Active. Parsing raw bits.");
+    for (char c : secret_message) {
+      if (c == '0') {
+        bit_stream.push_back(0);
+      } else if (c == '1') {
+        bit_stream.push_back(1);
+      } else {
+        QLOG("[SOURCE] WARNING: Non-binary character '" << c << "' ignored in binary_verification mode.");
+      }
+    }
+    // QSDC encodes pairs; pad with a 0 if the length is odd
+    if (bit_stream.size() % 2 != 0) {
+        bit_stream.push_back(0);
+        QLOG("[SOURCE] Padded bit stream with a trailing '0' to ensure even length for Bell state encoding.");
+    }
+  } else {
+    // Standard ASCII conversion
+    for (char c : secret_message) {
+      for (int i = 7; i >= 0; --i) {
+        bit_stream.push_back((c >> i) & 1);
+      }
     }
   }
 
   int num_groups = bit_stream.size() / 2;
   required_purified_pairs = num_groups * 2;
-
   int required_raw_pairs = required_purified_pairs * 2;
 
   QLOG("[SOURCE] Bits: " << bit_stream.size() << " | Req Purified Pairs: " << required_purified_pairs << " | Req Raw Pairs: " << required_raw_pairs);
@@ -131,6 +166,29 @@ void QSDCRepeatersApplication::setMessage() {
   setup_msg->setSequenceNum(required_raw_pairs);
   setup_msg->setFromNode("source");
   send(setup_msg, "toRouter");
+}
+
+void QSDCRepeatersApplication::translateAttacks() {
+  chosen_attacks = par("chosen_attacks").intValue();
+  // 3 bits:  XXX
+  //          1XX = malicious_entanglement
+  //          X1X = wrong_bsm_message
+  //          XX1 = wrong_hop_count
+
+  if (chosen_attacks & 0b100) {
+    attacks.malicious_entanglement = true;
+    QLOG("[EAVESDROPPER] Will perform Malicious Entanglement Attack");
+  }
+  if (chosen_attacks & 0b010) {
+    attacks.wrong_bsm_message = true;
+    QLOG("[EAVESDROPPER] Will propagate the wrong BSM messages");
+  }
+  if (chosen_attacks & 0b001) {
+    attacks.wrong_hop_count = true;
+    QLOG("[EAVESDROPPER] Will propagate the wrong hop count");
+  }
+
+  return;
 }
 
 void QSDCRepeatersApplication::sendNextQubitPair() {
@@ -393,6 +451,12 @@ void QSDCRepeatersApplication::measureBellStateAndSend(quisp::backends::IQubit* 
 
   local_qubit->Unlock();
 
+  if (is_eavesdropper && attacks.wrong_bsm_message) {
+    QLOG("[EAVESDROPPER] Sending a wrong BSM to endnode");
+    bsm_outcome = ((int)(10 * dblrand()) + bsm_outcome) % 4;  // randomizes the BSM to the endnode (umpredictable outcome)
+  }
+
+
   if (dst_addr != -1) {
     QSDCBSMResult* bsm_packet = new QSDCBSMResult("BSM_Announcement");
     bsm_packet->setSrcAddr(self_address);
@@ -532,7 +596,32 @@ void QSDCRepeatersApplication::attemptPurification() {
   received_qubits.erase(source_seq);
 
   int partner_address = is_source ? target_address : source_address;
-  sendClassicalMessage(partner_address, "QSDC_PURIFY_RESULT", "Purify_Result", target_seq, meas_res);
+
+  // Send our normal purification packet
+  auto* purification_packet = new QSDCPurificationResult("Purify_result");
+  purification_packet->setSrcAddr(self_address);
+  purification_packet->setDestAddr(partner_address);
+  purification_packet->setPurificationResult(meas_res);
+  purification_packet->setSequenceNum(target_seq);
+  send(purification_packet, "toRouter");
+
+  // BUG FIX: Check if the partner's classical packet arrived while we were calculating
+  if (early_partner_meas.find(target_seq) != early_partner_meas.end()) {
+    int early_meas = early_partner_meas[target_seq];
+    early_partner_meas.erase(target_seq);
+
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Retrieving early purification packet from buffer.");
+
+    // Re-create the classical packet and inject it into the OMNeT++ event queue
+    auto* buffered_pkt = new QSDCPurificationResult("Purify_result_buffered");
+    buffered_pkt->setSrcAddr(partner_address);
+    buffered_pkt->setDestAddr(self_address);
+    buffered_pkt->setPurificationResult(early_meas);
+    buffered_pkt->setSequenceNum(target_seq);
+
+    // scheduleAt(simTime()) tells OMNeT++ to route this packet back into handleMessage immediately
+    scheduleAt(simTime(), buffered_pkt);
+  }
 }
 
 void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::PhotonicQubit* photon) {
@@ -546,7 +635,7 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
   QLOG("[ENDNODE] Received PhotonicQubit sequence: " << seq_num << ". Attempting local storage.");
 
   if (is_source || is_target) {
-    auto* qnic = getQNIC("qnic", 0); 
+    auto* qnic = getQNIC("qnic", 0);
     if (!qnic) {
       QLOG("[ENDNODE] FATAL: Receiver QNIC not found!");
       delete photon;
@@ -555,12 +644,12 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
 
     quisp::modules::StationaryQubit* local_sq = nullptr;
     const int num_buf = qnic->par("num_buffer").intValue();
-    
+
     for (int i = 0; i < num_buf; i++) {
       auto* sq = check_and_cast<quisp::modules::StationaryQubit*>(qnic->getSubmodule("statQubit", i));
       if (!sq->isBusy() && !sq->isLocked()) {
         local_sq = sq;
-        local_sq->setBusy(); // Lock local memory
+        local_sq->setBusy();  // Lock local memory
         break;
       }
     }
@@ -579,11 +668,10 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtEndNode(quisp::messages::Ph
     incoming_qubit->gateCNOT(local_backend_qubit);
 
     received_qubits[seq_num] = local_backend_qubit;
-    
+
     local_stored_qubits[seq_num] = local_sq;
 
     QLOG("[ENDNODE] Qubit " << seq_num << " successfully absorbed into local memory. Sending STORED ACK.");
-
   }
 
   delete photon;
@@ -607,29 +695,106 @@ void QSDCRepeatersApplication::handleIncomingPhotonAtRepeater(quisp::messages::P
   int seq_num = (int)photon->par("sequence_number").longValue();
   std::string photon_direction = photon->par("direction").stringValue();
 
-  repeater_emitted_qubits[seq_num] = {new_pairs[0].qubit_1, new_pairs[0].qubit_2}; 
+  repeater_emitted_qubits[seq_num] = {new_pairs[0].qubit_1, new_pairs[0].qubit_2};
 
   auto* local_half = new_pairs[0].qubit_1;
   auto* remote_half = new_pairs[0].qubit_2;
-
-  auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
   int dst_addr = (photon_direction == "left") ? par("source_address").intValue() : par("target_address").intValue();
-  
-  measureBellStateAndSend(incoming_qubit, local_half, dst_addr, seq_num);
+  bool is_targeted_sequence = (seq_num >= targeted_attack_start && seq_num <= targeted_attack_end);
 
-  local_half->setFree(true);
+  if (is_eavesdropper && attacks.malicious_entanglement && is_targeted_sequence && !randomized_malicious_entanglement_attack) {
+    // Track direction and measurement per sequence to prevent OMNeT++ overwriting
+    eve_attack_direction[seq_num] = photon_direction;
 
-  auto* next_photon = new quisp::messages::PhotonicQubit("FORWARDED_PHOTON");
-  next_photon->setQubitRef(remote_half->getBackendQubitRef());
-  next_photon->addPar("src_addr") = self_address;
-  next_photon->addPar("qubit_index") = new_pairs[0].qi_2;
-  next_photon->addPar("sequence_number") = seq_num;
-  next_photon->addPar("direction") = photon_direction.c_str();
+    auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+    eve_intercept_meas[seq_num] = eigenToInt(incoming_qubit->measureZ());
 
-  if (photon_direction == "left") send(next_photon, "toQuantum_l");
-  if (photon_direction == "right") send(next_photon, "toQuantum_r");
+    int eve_fake_meas = eigenToInt(local_half->measureZ());
+    if (eve_fake_meas == 1) {
+      remote_half->gateX();
+    }
 
-  delete photon;
+    local_half->setFree(true);
+
+    QLOG("[EAVESDROPPER] Collapsed Server photon " << seq_num << " to " << eve_intercept_meas[seq_num] << ". Forwarding |0>.");
+
+    auto* next_photon = new quisp::messages::PhotonicQubit("FORWARDED_PHOTON");
+    next_photon->setQubitRef(remote_half->getBackendQubitRef());
+    next_photon->addPar("src_addr") = self_address;
+    next_photon->addPar("qubit_index") = remote_half;
+    next_photon->addPar("sequence_number") = seq_num;
+    next_photon->addPar("direction") = photon_direction.c_str();
+
+    if (photon_direction == "left") send(next_photon, "toQuantum_l");
+    if (photon_direction == "right") send(next_photon, "toQuantum_r");
+
+    if (dst_addr != -1) {
+      QSDCBSMResult* bsm_packet = new QSDCBSMResult("BSM_Announcement");
+      bsm_packet->setSrcAddr(self_address);
+      bsm_packet->setDestAddr(dst_addr);
+      bsm_packet->setBsmOutcome(3);  // Force BSM outcome 3 to prevent EndNode Pauli corrections
+      bsm_packet->setSequenceNum(seq_num);
+      send(bsm_packet, "toRouter");
+    }
+
+    delete photon;
+    return;
+  } else if (is_eavesdropper && attacks.malicious_entanglement && randomized_malicious_entanglement_attack && dblrand() < entanglement_attack_rate){
+    
+    eve_attack_direction[seq_num] = photon_direction;
+
+    auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+    eve_intercept_meas[seq_num] = eigenToInt(incoming_qubit->measureZ());
+
+    int eve_fake_meas = eigenToInt(local_half->measureZ());
+    if (eve_fake_meas == 1) {
+      remote_half->gateX();
+    }
+
+    local_half->setFree(true);
+
+    QLOG("[EAVESDROPPER] Collapsed Server photon " << seq_num << " to " << eve_intercept_meas[seq_num] << ". Forwarding |0>.");
+
+    auto* next_photon = new quisp::messages::PhotonicQubit("FORWARDED_PHOTON");
+    next_photon->setQubitRef(remote_half->getBackendQubitRef());
+    next_photon->addPar("src_addr") = self_address;
+    next_photon->addPar("qubit_index") = remote_half;
+    next_photon->addPar("sequence_number") = seq_num;
+    next_photon->addPar("direction") = photon_direction.c_str();
+
+    if (photon_direction == "left") send(next_photon, "toQuantum_l");
+    if (photon_direction == "right") send(next_photon, "toQuantum_r");
+
+    if (dst_addr != -1) {
+      QSDCBSMResult* bsm_packet = new QSDCBSMResult("BSM_Announcement");
+      bsm_packet->setSrcAddr(self_address);
+      bsm_packet->setDestAddr(dst_addr);
+      bsm_packet->setBsmOutcome(3);  // Force BSM outcome 3 to prevent EndNode Pauli corrections
+      bsm_packet->setSequenceNum(seq_num);
+      send(bsm_packet, "toRouter");
+    }
+
+    delete photon;
+    return;
+  } else {
+    auto* incoming_qubit = const_cast<quisp::backends::IQubit*>(photon->getQubitRef());
+
+    measureBellStateAndSend(incoming_qubit, local_half, dst_addr, seq_num);
+
+    local_half->setFree(true);
+
+    auto* next_photon = new quisp::messages::PhotonicQubit("FORWARDED_PHOTON");
+    next_photon->setQubitRef(remote_half->getBackendQubitRef());
+    next_photon->addPar("src_addr") = self_address;
+    next_photon->addPar("qubit_index") = remote_half;
+    next_photon->addPar("sequence_number") = seq_num;
+    next_photon->addPar("direction") = photon_direction.c_str();
+
+    if (photon_direction == "left") send(next_photon, "toQuantum_l");
+    if (photon_direction == "right") send(next_photon, "toQuantum_r");
+
+    delete photon;
+  }
 }
 
 void QSDCRepeatersApplication::cleanupRepeaterMemory() {
@@ -642,7 +807,7 @@ void QSDCRepeatersApplication::cleanupRepeaterMemory() {
       }
     }
   }
-  
+
   repeater_emitted_qubits.clear();
 }
 
@@ -715,7 +880,6 @@ void QSDCRepeatersApplication::decodeQSDC() {
   decoded_bit_stream.clear();
   decoded_bit_stream.resize(buffered_source_bsms.size() * 2);
 
-  // 2. Decode using deterministic grouping
   for (auto const& [group_index, source_bsm] : buffered_source_bsms) {
     int q1_seq = stored_purified_qubit_seqs[group_index * 2];
     int q2_seq = stored_purified_qubit_seqs[group_index * 2 + 1];
@@ -753,21 +917,33 @@ void QSDCRepeatersApplication::decodeQSDC() {
     // Map directly to the exact index, bypassing OMNeT++ arrival order
     decoded_bit_stream[group_index * 2] = bit1;
     decoded_bit_stream[group_index * 2 + 1] = bit2;
+    
+    if (binary_verification) {
+        QLOG("[TARGET] Decoded QSDC Group " << group_index << " -> Bits: " << bit1 << bit2);
+    }
 
     qubit_1->setFree();
     qubit_2->setFree();
   }
 
-  std::string final_message = "";
-  for (size_t i = 0; i + 7 < decoded_bit_stream.size(); i += 8) {
-    char c = 0;
-    for (int j = 0; j < 8; ++j) {
-      c = (c << 1) | decoded_bit_stream[i + j];
-    }
-    final_message += c;
+  // Final message reconstruction branch
+  if (binary_verification) {
+      std::string final_binary_message = "";
+      for (int b : decoded_bit_stream) {
+          final_binary_message += std::to_string(b);
+      }
+      QLOG("[TARGET] FINAL RECONSTRUCTED BINARY: " << final_binary_message);
+  } else {
+      std::string final_message = "";
+      for (size_t i = 0; i + 7 < decoded_bit_stream.size(); i += 8) {
+        char c = 0;
+        for (int j = 0; j < 8; ++j) {
+          c = (c << 1) | decoded_bit_stream[i + j];
+        }
+        final_message += c;
+      }
+      QLOG("[TARGET] FINAL RECONSTRUCTED MESSAGE: " << final_message);
   }
-
-  QLOG("[TARGET] FINAL RECONSTRUCTED MESSAGE: " << final_message);
 }
 
 void QSDCRepeatersApplication::checkAndTriggerDecoding() {
@@ -796,7 +972,11 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
 
   if (auto* hop_msg = dynamic_cast<quisp::messages::QSDCHopMessage*>(msg)) {
     if (is_repeater) {
-      hop_msg->setQSDCHopCount(hop_msg->getQSDCHopCount() + 1);
+      if (is_eavesdropper && attacks.wrong_hop_count) {
+        QLOG("[EAVESDROPPER] Sending wrong hop count to endnode");
+        hop_msg->setQSDCHopCount(hop_msg->getQSDCHopCount());
+      } else
+        hop_msg->setQSDCHopCount(hop_msg->getQSDCHopCount() + 1);
       QLOG("[REPEATER] Intercepted Hop Probe. Incremented counter to: " << hop_msg->getQSDCHopCount());
       send(hop_msg, "toRouter");
     } else if (is_source || is_target) {
@@ -865,7 +1045,6 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
   }
 
   if (auto* pkt = dynamic_cast<quisp::messages::QSDCCleanQuantumMemory*>(msg)) {
-    
     if (is_repeater) {
       cleanupRepeaterMemory();
       send(pkt, "toRouter");
@@ -873,6 +1052,10 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
     }
 
     delete msg;
+    return;
+  }
+  if (auto* pkt = dynamic_cast<quisp::messages::QSDCPurificationResult*>(msg)) {
+    processPurifyResult(pkt);
     return;
   }
 
@@ -892,8 +1075,6 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
       processCommAck(pkt);
     else if (msg_type == QSDC_QUBIT_ACK)
       processQubitAck(pkt);
-    else if (msg_type == QSDC_PURIFY_RESULT)
-      processPurifyResult(pkt);
     else if (msg_type == QSDC_QUBIT_SYNC)
       processQubitSync(pkt);
     else if (msg_type == QSDC_QUBIT_ERROR)
@@ -1084,20 +1265,55 @@ void QSDCRepeatersApplication::processQubitAck(quisp::messages::QSDCSynAck* pkt)
   delete pkt;
 }
 
-void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* pkt) {
+void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCPurificationResult* pkt) {
   if (qubit_reception_timeout_msg != nullptr) {
     cancelAndDelete(qubit_reception_timeout_msg);
     qubit_reception_timeout_msg = nullptr;
   }
-  if (is_repeater) {
+
+  if (pkt->getDestAddr() != self_address) {
+    
+    if (is_repeater && is_eavesdropper && attacks.malicious_entanglement) {
+      int target_seq = pkt->getSequenceNum();
+      int source_seq = target_seq + 1;
+      int dest = pkt->getDestAddr();
+      
+      if (eve_attack_direction.find(target_seq) != eve_attack_direction.end()) {
+          
+          std::string direction = eve_attack_direction[target_seq];
+          
+          if ((direction == "right" && dest == target_address) ||
+              (direction == "left"  && dest == source_address)) {
+              
+              QLOG("[EAVESDROPPER] Spoofing packet to Attacked node -> +1");
+              pkt->setPurificationResult(1);
+          } 
+          else if (eve_intercept_meas.find(target_seq) != eve_intercept_meas.end() && 
+                   eve_intercept_meas.find(source_seq) != eve_intercept_meas.end()) {
+              
+              int m0 = eve_intercept_meas[target_seq];
+              int m1 = eve_intercept_meas[source_seq];
+              int predicted_meas = (m0 == m1) ? 1 : -1;
+              
+              QLOG("[EAVESDROPPER] Predicting Un-attacked node state -> Spoofing to " << predicted_meas);
+              pkt->setPurificationResult(predicted_meas);
+          }
+      }
+    }
     send(pkt, "toRouter");
-    return;
+    return; 
   }
 
   int target_seq = pkt->getSequenceNum();
-  int partner_meas = pkt->getMeasResult();
+  int partner_meas = pkt->getPurificationResult();
 
-  // Safe Map Lookup
+  if (my_local_measurements.find(target_seq) == my_local_measurements.end()) {
+      QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Packet arrived before local measurement. Waiting.");
+
+      delete pkt;
+      return;
+  }
+
   int my_meas = my_local_measurements[target_seq];
   QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Comparing Purification Results. Mine: " << my_meas << ", Partner: " << partner_meas);
 
@@ -1109,14 +1325,9 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
       received_qubits[target_seq]->gateX();
     }
 
-    // store qubit
     stored_purified_qubit_seqs.push_back(target_seq);
-
-
-
     sendClassicalMessage(server_address, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq);
 
-    // Check if we have enough to start encoding
     if (is_source && stored_purified_qubit_seqs.size() == required_purified_pairs) {
       QLOG("[SOURCE] All required pairs purified and stored. Initiating QSDC Encoding.");
       scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_QSDC_ENCODE_MESSAGE));
@@ -1124,13 +1335,11 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCSynAck* 
   } else {
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification FAILED. Requesting Rollback.");
     sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq);
-
-    // received_qubits[target_seq]->setFree(true);
     received_qubits.erase(target_seq);
   }
+  
   delete pkt;
 }
-
 void QSDCRepeatersApplication::processQubitError(quisp::messages::QSDCSynAck* pkt) {
   if (is_repeater) {
     send(pkt, "toRouter");
@@ -1189,6 +1398,9 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
     bsm_arrival_counts.erase(target_index);
     bsm_arrival_counts.erase(source_index);
 
+    stored_purified_qubit_seqs.erase(std::remove(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end(), target_index), stored_purified_qubit_seqs.end());
+    stored_purified_qubit_seqs.erase(std::remove(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end(), source_index), stored_purified_qubit_seqs.end());
+
     cumulative_corrections.erase(target_index);
     cumulative_corrections.erase(source_index);
 
@@ -1202,18 +1414,18 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
   delete pkt;
 }
 
-void QSDCRepeatersApplication::cleanupLocalMemory(int seq_num){
+void QSDCRepeatersApplication::cleanupLocalMemory(int seq_num) {
   if (local_stored_qubits.find(seq_num) != local_stored_qubits.end()) {
-        if (local_stored_qubits[seq_num] != nullptr) {
-          local_stored_qubits[seq_num]->setFree(true);
-        }
-        local_stored_qubits.erase(seq_num);
-      }
-      
-      if (received_qubits.find(seq_num) != received_qubits.end()) {
-        received_qubits.erase(seq_num);
-      }
-      return;
+    if (local_stored_qubits[seq_num] != nullptr) {
+      local_stored_qubits[seq_num]->setFree(true);
+    }
+    local_stored_qubits.erase(seq_num);
+  }
+
+  if (received_qubits.find(seq_num) != received_qubits.end()) {
+    received_qubits.erase(seq_num);
+  }
+  return;
 }
 
 void QSDCRepeatersApplication::processQubitContinue(quisp::messages::QSDCSynAck* pkt) {

@@ -14,10 +14,16 @@ simple QSDCRepeatersApplication
     double custom_gate_error_rate = default(0.0);
     double timeout_interval = default(0.005);
 
+    bool is_eavesdropper = default(false);
+    int chosen_attacks = default(0);
+    double entanglement_attack_rate = default(0.0);
     int total_qubits_to_send = default(20);
     string secret_message = default("Hello World!");
     int expected_bsms = default(1);
-    
+    bool binary_verification = default(false);
+    int targeted_attack_start = default(0);
+    int targeted_attack_end = default(0);
+    bool randomized_malicious_entanglement_attack = default(false);
     // Define exact routing addresses for your topology
     int source_address = default(0);
     int server_address = default(2);

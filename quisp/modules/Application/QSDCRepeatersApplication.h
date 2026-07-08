@@ -17,21 +17,27 @@
 #include <vector>
 
 namespace omnetpp {
-class cMessage;
-class cModule;
+  class cMessage;
+  class cModule;
 }  // namespace omnetpp
 
 namespace quisp::modules {
+  
+  struct LocalBellPair {
+    int qnic_index;
+    int qi_1;
+    int qi_2;
+    quisp::modules::StationaryQubit* qubit_1;
+    quisp::modules::StationaryQubit* qubit_2;
+  };
 
-struct LocalBellPair {
-  int qnic_index;
-  int qi_1;
-  int qi_2;
-  quisp::modules::StationaryQubit* qubit_1;
-  quisp::modules::StationaryQubit* qubit_2;
-};
-
-enum class BellState { PhiPlus, PhiMinus, PsiPlus, PsiMinus };
+  struct MitMAttacks {
+    bool malicious_entanglement;
+    bool wrong_bsm_message;
+    bool wrong_hop_count;
+  };
+  
+  enum class BellState { PhiPlus, PhiMinus, PsiPlus, PsiMinus };
 
 class StationaryQubit;
 
@@ -51,6 +57,17 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   bool is_target = false;
   bool is_repeater = false;
   bool is_server = false;
+  bool is_eavesdropper = false;
+  int chosen_attacks = 0;
+  double entanglement_attack_rate = 0.0;
+  MitMAttacks attacks = {false, false, false};
+  std::map<int, int> eve_intercept_meas;
+  std::map<int, std::string> eve_attack_direction;
+  bool binary_verification = false;
+  int targeted_attack_start = 0;
+  int targeted_attack_end = 0;
+  bool randomized_malicious_entanglement_attack = false;
+  
 
   // Protocol parameters
   int total_qubits_to_send = 0;
@@ -72,6 +89,7 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   std::map<int, std::vector<quisp::modules::StationaryQubit*>> repeater_emitted_qubits;
   std::map<int, int> buffered_source_bsms;
   std::map<int, PauliTracker> cumulative_corrections;
+  std::map<int, int> early_partner_meas;
 
   utils::ComponentProvider provider;
   int self_address = -1;
@@ -96,21 +114,20 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   std::vector<int> bit_stream;  // The message converted to 0s and 1s
   std::vector<int> decoded_bit_stream;  // target's incoming bits
   int required_purified_pairs;  // Calculated based on message length
-
   std::vector<int> stored_purified_qubit_seqs;
-
+  
   std::map<int, int> source_bsm_results;
-
+  
   omnetpp::cMessage* qubit_reception_timeout_msg = nullptr;
-
+  
   double channel_loss_rate = 0.0;
   double measurement_error_rate = 0.0;
   double gate_error_rate = 0.0;
-
+  
   int source_address = -1;
   int target_address = -1;
   int server_address = -1;
-
+  
   void applyDepolarizingNoise(quisp::backends::IQubit* qubit);
 
   omnetpp::cMessage* timeout_msg = nullptr;
@@ -139,6 +156,7 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   void processReceptionTimeout(omnetpp::cMessage* msg);
   void cleanupRepeaterMemory();
   void cleanupLocalMemory(int seq_num);
+  void translateAttacks();
 
   void processMessageSetup(quisp::messages::QSDCSynAck* pkt);
   void processQSDCPrepare(omnetpp::cMessage* msg);
@@ -151,7 +169,7 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
 
   void processQubitSync(quisp::messages::QSDCSynAck* pkt);
   void processQubitAck(quisp::messages::QSDCSynAck* pkt);
-  void processPurifyResult(quisp::messages::QSDCSynAck* pkt);
+  void processPurifyResult(quisp::messages::QSDCPurificationResult* pkt);
 
   void processQubitError(quisp::messages::QSDCSynAck* pkt);
   void processQubitDiscard(quisp::messages::QSDCSynAck* pkt);

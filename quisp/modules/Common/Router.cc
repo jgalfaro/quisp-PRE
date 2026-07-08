@@ -164,6 +164,14 @@ void Router::handleMessage(cMessage *msg) {
       send(pk, "toApp"); 
       return;
     } 
+  } else if (dest_addr == my_address && dynamic_cast<QSDCPurificationResult*>(msg)) {
+    send(pk, "toApp"); 
+    return; 
+  } else if (dest_addr != my_address && dynamic_cast<QSDCPurificationResult*>(msg)) {
+    if (strcmp(msg->getArrivalGate()->getName(), "fromQueue") == 0) {
+      send(pk, "toApp"); 
+      return;
+    } 
   }
   
 
