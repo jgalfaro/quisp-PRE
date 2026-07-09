@@ -141,9 +141,14 @@ void QSDCRepeatersApplication::setMessage() {
       }
     }
     // QSDC encodes pairs; pad with a 0 if the length is odd
+    bit_stream.insert(bit_stream.begin(), 1);
+
+    // If the length is still odd, pad with a leading '0'
     if (bit_stream.size() % 2 != 0) {
-        bit_stream.push_back(0);
-        QLOG("[SOURCE] Padded bit stream with a trailing '0' to ensure even length for Bell state encoding.");
+        bit_stream.insert(bit_stream.begin(), 0);
+        QLOG("[SOURCE] Prepended a '0' and a '1' (start bit) to ensure even length.");
+    } else {
+        QLOG("[SOURCE] Prepended a '1' (start bit) to the bit stream.");
     }
   } else {
     // Standard ASCII conversion
@@ -932,6 +937,12 @@ void QSDCRepeatersApplication::decodeQSDC() {
       for (int b : decoded_bit_stream) {
           final_binary_message += std::to_string(b);
       }
+
+      size_t start_bit_pos = final_binary_message.find('1');
+      if (start_bit_pos != std::string::npos) {
+          final_binary_message = final_binary_message.substr(start_bit_pos + 1);
+      }
+      
       QLOG("[TARGET] FINAL RECONSTRUCTED BINARY: " << final_binary_message);
   } else {
       std::string final_message = "";

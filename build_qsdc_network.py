@@ -127,6 +127,16 @@ sim-time-limit = 10s
 
 **.source.app.secret_message = "''' + message + '''"
 
+**.targeted_attack_start = 40
+**.targeted_attack_end = 80
+
+*.BSArepeater1.app.is_eavesdropper = false
+*.BSArepeater1.app.chosen_attacks = 4
+*.BSArepeater1.app.randomized_malicious_entanglement_attack = true
+*.BSArepeater1.app.entanglement_attack_rate = 0.15
+
+**.binary_verification = true
+
 # === Timings and Protocol State ===
 **.EndToEndConnection = true
 **.initial_notification_timing_buffer = 0s
