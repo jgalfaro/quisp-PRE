@@ -24,6 +24,11 @@ simple QSDCRepeatersApplication
     int targeted_attack_start = default(0);
     int targeted_attack_end = default(0);
     bool randomized_malicious_entanglement_attack = default(false);
+    int protocol_choice = default(0);
+    bool is_qkd_phase = default(true);  
+    int required_qkd_pad_length = default(64);
+    int qubit_block_size = default(128);
+
     // Define exact routing addresses for your topology
     int source_address = default(0);
     int server_address = default(2);

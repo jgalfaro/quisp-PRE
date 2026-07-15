@@ -17,27 +17,27 @@
 #include <vector>
 
 namespace omnetpp {
-  class cMessage;
-  class cModule;
+class cMessage;
+class cModule;
 }  // namespace omnetpp
 
 namespace quisp::modules {
-  
-  struct LocalBellPair {
-    int qnic_index;
-    int qi_1;
-    int qi_2;
-    quisp::modules::StationaryQubit* qubit_1;
-    quisp::modules::StationaryQubit* qubit_2;
-  };
 
-  struct MitMAttacks {
-    bool malicious_entanglement;
-    bool wrong_bsm_message;
-    bool wrong_hop_count;
-  };
-  
-  enum class BellState { PhiPlus, PhiMinus, PsiPlus, PsiMinus };
+struct LocalBellPair {
+  int qnic_index;
+  int qi_1;
+  int qi_2;
+  quisp::modules::StationaryQubit* qubit_1;
+  quisp::modules::StationaryQubit* qubit_2;
+};
+
+struct MitMAttacks {
+  bool malicious_entanglement;
+  bool wrong_bsm_message;
+  bool wrong_hop_count;
+};
+
+enum class BellState { PhiPlus, PhiMinus, PsiPlus, PsiMinus };
 
 class StationaryQubit;
 
@@ -67,11 +67,11 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   int targeted_attack_start = 0;
   int targeted_attack_end = 0;
   bool randomized_malicious_entanglement_attack = false;
-  
 
   // Protocol parameters
   int total_qubits_to_send = 0;
   int current_qubit_index = 0;
+  int qubit_block_size = 128;
 
   // FSM data
   bool source_ready = false;
@@ -80,8 +80,12 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   bool target_received_current = false;
 
   // Async Memory and Purification Tracking
+  // Inside QSDCRepeatersApplication.h, under the protected variables:
+
+  // Async Memory and Purification Tracking
   std::map<int, quisp::backends::IQubit*> received_qubits;
-  std::map<int, quisp::modules::StationaryQubit*> local_stored_qubits; // TODO: check difference
+  std::map<int, quisp::modules::StationaryQubit*> local_stored_qubits;
+  std::map<int, quisp::modules::StationaryQubit*> pure_teleported_qubits;  // NEW: Persistent pure storage
   std::map<int, int> bsm_arrival_counts;
   std::vector<int> ready_qubits;
   std::map<int, int> my_local_measurements;  // NEW: Safe map for your Z-basis results
@@ -115,19 +119,19 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   std::vector<int> decoded_bit_stream;  // target's incoming bits
   int required_purified_pairs;  // Calculated based on message length
   std::vector<int> stored_purified_qubit_seqs;
-  
+
   std::map<int, int> source_bsm_results;
-  
+
   omnetpp::cMessage* qubit_reception_timeout_msg = nullptr;
-  
+
   double channel_loss_rate = 0.0;
   double measurement_error_rate = 0.0;
   double gate_error_rate = 0.0;
-  
+
   int source_address = -1;
   int target_address = -1;
   int server_address = -1;
-  
+
   void applyDepolarizingNoise(quisp::backends::IQubit* qubit);
 
   omnetpp::cMessage* timeout_msg = nullptr;
@@ -138,6 +142,25 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   void encodeAndPerformQSDC();
   void decodeQSDC();
   bool comm_end_received = false;
+
+  // 0 = QPP
+  // 1 = QSDC
+  int protocol_choice = 0;
+  bool is_qkd_phase = true;
+  int required_qkd_pad_length = 64;
+
+  // QKD Tracking
+  std::map<int, int> qkd_basis_choices;  // 0 for Z-basis, 1 for X-basis
+  std::map<int, int> qkd_measurement_results;
+  std::vector<int> private_pad;
+
+  void processQKDBasisSync(quisp::messages::QSDCSynAck* pkt);
+  void setQKDBits();
+  void processQKDCompleted(quisp::messages::QSDCSynAck* pkt);
+  void printPad();
+  void doQKD();
+  void executeTeleportation();
+  void processTeleportBSM(quisp::messages::QSDCSynAck* pkt);
 
   void checkAndTriggerDecoding();
 
