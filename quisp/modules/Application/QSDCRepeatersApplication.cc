@@ -1393,18 +1393,21 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCPurifica
 
     if (is_source && !is_qkd_phase) {
       if (protocol_choice == 1 && stored_purified_qubit_seqs.size() == required_purified_pairs) {
-
         QLOG("[SOURCE] All required pairs purified and stored. Initiating QSDC Encoding.");
         scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_QSDC_ENCODE_MESSAGE));
-
       } else if (protocol_choice == 0 && stored_purified_qubit_seqs.size() == (qubit_block_size / 2)) {
-        
         QLOG("[SOURCE] EPR distribution complete. Triggering Quantum Pad Permutation (Teleportation).");
         cMessage* teleport_msg = new cMessage(SELF_EXECUTE_TELEPORTATION);
-
         scheduleAt(simTime() + par("sample_interval"), teleport_msg);
       }
     }
+  } else {
+    QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification FAILED for Qubit " << target_seq << ". State compromised. Initiating ARQ.");
+
+    cleanupLocalMemory(target_seq);
+    cleanupLocalMemory(target_seq + 1); 
+    
+    sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq);
   }
 
   delete pkt;
