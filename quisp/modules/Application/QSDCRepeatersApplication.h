@@ -95,6 +95,8 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   std::map<int, PauliTracker> cumulative_corrections;
   std::map<int, int> early_partner_meas;
 
+  void applyQuantumPadPermutation();
+
   utils::ComponentProvider provider;
   int self_address = -1;
   bool is_initiator = false;
@@ -153,6 +155,9 @@ class QSDCRepeatersApplication : public IApplication, public Logger::LoggerBase 
   std::map<int, int> qkd_basis_choices;  // 0 for Z-basis, 1 for X-basis
   std::map<int, int> qkd_measurement_results;
   std::vector<int> private_pad;
+  unsigned int deterministic_seed = 0;
+  std::vector<int> target_shuffled_seqs;
+
 
   void processQKDBasisSync(quisp::messages::QSDCSynAck* pkt);
   void setQKDBits();

@@ -127,6 +127,12 @@ sim-time-limit = 10s
 
 **.source.app.secret_message = "''' + message + '''"
 
+**.protocol_choice = 0
+**.is_qkd_phase = true
+**.required_qkd_pad_length = 100
+**.qubit_block_size = 16
+**.binary_verification = true
+
 **.targeted_attack_start = 40
 **.targeted_attack_end = 80
 

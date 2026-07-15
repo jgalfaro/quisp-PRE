@@ -1,7 +1,10 @@
 #include "QSDCRepeatersApplication.h"
 
+#include <algorithm>
 #include <fstream>
+#include <functional>
 #include <iomanip>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1223,14 +1226,30 @@ void QSDCRepeatersApplication::processCommEnd(quisp::messages::QSDCSynAck* pkt) 
         doQKD();
       }
     } else {
-      QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Teleportation Block Distribution Complete. Awaiting final BSMs.");
+      QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Teleportation Block Distribution Complete.");
 
+      if (is_target) {
+        QLOG("[TARGET] Generating Un-Shuffle Map at synchronized FSM barrier.");
+        target_shuffled_seqs = stored_purified_qubit_seqs;
+        std::sort(target_shuffled_seqs.begin(), target_shuffled_seqs.end());
+        
+        std::mt19937 prng(deterministic_seed);
+        std::shuffle(target_shuffled_seqs.begin(), target_shuffled_seqs.end(), prng);
+      } else if (is_source) {
+        QLOG("[SOURCE] Triggering Quantum Pad Permutation (Teleportation) at FSM barrier.");
+        cMessage* teleport_msg = new cMessage(SELF_EXECUTE_TELEPORTATION);
+        scheduleAt(simTime() + par("sample_interval"), teleport_msg);
+      }
     }
   } 
   else if (protocol_choice == 1) { // Standard QSDC Branch
     if (is_target) {
       comm_end_received = true;
       checkAndTriggerDecoding();
+    } else if (is_source) {
+      // Also shift QSDC encoding to the safe barrier
+      QLOG("[SOURCE] Initiating QSDC Encoding at synchronized FSM barrier.");
+      scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_QSDC_ENCODE_MESSAGE));
     }
   }
   delete pkt;
@@ -1379,7 +1398,7 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCPurifica
   int my_meas = my_local_measurements[target_seq];
   QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Comparing Purification Results. Mine: " << my_meas << ", Partner: " << partner_meas);
 
-  if (my_meas == partner_meas) {
+if (my_meas == partner_meas) {
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification SUCCESS for Qubit " << target_seq);
 
     if (is_source) {
@@ -1387,26 +1406,15 @@ void QSDCRepeatersApplication::processPurifyResult(quisp::messages::QSDCPurifica
       received_qubits[target_seq]->gateX();
     }
 
-    // Unconditionally store the qubit regardless of protocol phase
     stored_purified_qubit_seqs.push_back(target_seq);
     sendClassicalMessage(server_address, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq);
 
-    if (is_source && !is_qkd_phase) {
-      if (protocol_choice == 1 && stored_purified_qubit_seqs.size() == required_purified_pairs) {
-        QLOG("[SOURCE] All required pairs purified and stored. Initiating QSDC Encoding.");
-        scheduleAt(simTime() + par("sample_interval"), new cMessage(SELF_QSDC_ENCODE_MESSAGE));
-      } else if (protocol_choice == 0 && stored_purified_qubit_seqs.size() == (qubit_block_size / 2)) {
-        QLOG("[SOURCE] EPR distribution complete. Triggering Quantum Pad Permutation (Teleportation).");
-        cMessage* teleport_msg = new cMessage(SELF_EXECUTE_TELEPORTATION);
-        scheduleAt(simTime() + par("sample_interval"), teleport_msg);
-      }
-    }
   } else {
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification FAILED for Qubit " << target_seq << ". State compromised. Initiating ARQ.");
 
     cleanupLocalMemory(target_seq);
-    cleanupLocalMemory(target_seq + 1); 
-    
+    cleanupLocalMemory(target_seq + 1);
+
     sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq);
   }
 
@@ -1544,7 +1552,7 @@ void QSDCRepeatersApplication::processQKDBasisSync(quisp::messages::QSDCSynAck* 
   QLOG("[QKD TARGET] Received Basis Sync containing " << source_bases.size() << " basis choices.");
   QLOG("[QKD TARGET] Received Basis Sync containing " << source_bases.size() << " basis choices.");
 
-  std::string matched_seqs = "";  
+  std::string matched_seqs = "";
 
   for (auto const& [seq_num, source_basis] : source_bases) {
     if (qkd_basis_choices.find(seq_num) != qkd_basis_choices.end()) {
@@ -1554,7 +1562,7 @@ void QSDCRepeatersApplication::processQKDBasisSync(quisp::messages::QSDCSynAck* 
         int my_meas = qkd_measurement_results[seq_num];
         private_pad.push_back(my_meas);
 
-        matched_seqs += std::to_string(seq_num) + ",";  
+        matched_seqs += std::to_string(seq_num) + ",";
 
         QLOG("[QKD TARGET] Sifting SUCCESS on Qubit " << seq_num << ". Basis: " << target_basis << ". Pad Bit added.");
       } else {
@@ -1583,7 +1591,7 @@ void QSDCRepeatersApplication::processQKDBasisSync(quisp::messages::QSDCSynAck* 
   src_comp_msg->addPar("sifted_sequences").setStringValue(matched_seqs.c_str());
   src_comp_msg->setSrcAddr(self_address);
   src_comp_msg->setDestAddr(source_address);
-  src_comp_msg->setFromNode("target"); 
+  src_comp_msg->setFromNode("target");
 
   QLOG("[MESSAGE] Sending ClassicalMessage QKD_COMPLETED with sifted sequence data to Source");
   send(src_comp_msg, "toRouter");
@@ -1602,9 +1610,12 @@ void QSDCRepeatersApplication::printPad() {
     pad_str += (bit == -1) ? "1" : "0";
   }
 
-  QLOG("[QKD " << (is_source ? "SOURCE" : "TARGET") << "] =========================================");
+  std::hash<std::string> hasher;
+  deterministic_seed = hasher(pad_str);
+
+
   QLOG("[QKD " << (is_source ? "SOURCE" : "TARGET") << "] FINAL SECURE PAD GENERATED: " << pad_str);
-  QLOG("[QKD " << (is_source ? "SOURCE" : "TARGET") << "] =========================================");
+  QLOG("[QKD " << (is_source ? "SOURCE" : "TARGET") << "] DETERMINISTIC PERMUTATION SEED: " << deterministic_seed);
 }
 
 void QSDCRepeatersApplication::processQKDCompleted(quisp::messages::QSDCSynAck* pkt) {
@@ -1673,7 +1684,7 @@ void QSDCRepeatersApplication::doQKD() {
     // randomly choose a basis: 0 for Z, 1 for X
     int basis = (dblrand() < 0.5) ? 0 : 1;
     int meas_res = 0;
-    
+
     if (basis == 0) {
       meas_res = eigenToInt(purified_qubit->measureZ());
     } else {
@@ -1706,9 +1717,12 @@ void QSDCRepeatersApplication::doQKD() {
 }
 
 void QSDCRepeatersApplication::executeTeleportation() {
+  int transmission_index = 0;
   QLOG("[SOURCE] Initiating Quantum Pad Permutation: Teleporting random block.");
 
   std::sort(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end());
+
+  applyQuantumPadPermutation();
 
   auto* qnic = getQNIC("qnic", 0);
   if (!qnic) {
@@ -1765,9 +1779,10 @@ void QSDCRepeatersApplication::executeTeleportation() {
     auto* tel_msg = new QSDCSynAck(QPP_TELEPORT_BSM);
     tel_msg->setSrcAddr(self_address);
     tel_msg->setDestAddr(target_address);
-    tel_msg->setSequenceNum(seq_num);
-    tel_msg->setMeasResult(bsm_outcome);
 
+    tel_msg->setSequenceNum(transmission_index++);
+
+    tel_msg->setMeasResult(bsm_outcome);
     tel_msg->addPar("prep_basis") = prep_basis;
     tel_msg->addPar("expected_eigenvalue") = expected_eigenvalue;
 
@@ -1778,56 +1793,80 @@ void QSDCRepeatersApplication::executeTeleportation() {
   }
 }
 
-void QSDCRepeatersApplication::processTeleportBSM(quisp::messages::QSDCSynAck* pkt) {
-  if (is_target) {
-    int seq_num = pkt->getSequenceNum();
-    int bsm_outcome = pkt->getMeasResult();
+  void QSDCRepeatersApplication::processTeleportBSM(quisp::messages::QSDCSynAck * pkt) {
+    if (is_target) {
+      int masked_index = pkt->getSequenceNum();
 
-    if (received_qubits.find(seq_num) == received_qubits.end()) {
-      QLOG("[TARGET] ERROR: EPR Half for teleportation sequence " << seq_num << " not found in memory.");
-      delete pkt;
-      return;
+      if (masked_index >= target_shuffled_seqs.size()) {
+        QLOG("[TARGET] FATAL: Out-of-bounds masked index received.");
+        delete pkt;
+        return;
+      }
+      int seq_num = target_shuffled_seqs[masked_index];
+
+      if (received_qubits.find(seq_num) == received_qubits.end()) {
+        QLOG("[TARGET] ERROR: EPR Half for teleportation sequence " << seq_num << " not found in memory.");
+        delete pkt;
+        return;
+      }
+
+      auto* target_epr = received_qubits[seq_num];
+      int bsm_outcome = pkt->getMeasResult();
+
+      if (received_qubits.find(seq_num) == received_qubits.end()) {
+        QLOG("[TARGET] ERROR: EPR Half for teleportation sequence " << seq_num << " not found in memory.");
+        delete pkt;
+        return;
+      }
+
+      int m1 = (bsm_outcome >> 1) & 1;
+      int m2 = bsm_outcome & 1;
+
+      QLOG("[TARGET] Received Teleport BSM for sequence " << seq_num << ". Applying Pauli Frame (m1=" << m1 << ", m2=" << m2 << ")");
+
+      // Apply Psi- Teleportation Pauli Corrections
+      if (m1 == 0 && m2 == 0) {
+        target_epr->gateX();
+      } else if (m1 == 0 && m2 == 1) {
+        // Identity - No operation needed
+      } else if (m1 == 1 && m2 == 0) {
+        target_epr->gateZ();
+        target_epr->gateX();
+      } else if (m1 == 1 && m2 == 1) {
+        target_epr->gateZ();
+      }
+
+      QLOG("[TARGET] Teleportation of Data Qubit " << seq_num << " complete. State recovered and preserved in pure form.");
+
+      if (local_stored_qubits.find(seq_num) != local_stored_qubits.end()) {
+        pure_teleported_qubits[seq_num] = local_stored_qubits[seq_num];
+        local_stored_qubits.erase(seq_num);
+        received_qubits.erase(seq_num);
+      }
+
+      stored_purified_qubit_seqs.erase(std::remove(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end(), seq_num), stored_purified_qubit_seqs.end());
+
+      if (stored_purified_qubit_seqs.empty()) {
+        QLOG("[TARGET] ==============================================================");
+        QLOG("[TARGET] Quantum Pad Permutation (QPP) successfully completed.");
+        QLOG("[TARGET] Entire block teleported safely. Pure states are locked in pure_teleported_qubits.");
+        QLOG("[TARGET] ==============================================================");
+      }
     }
-
-    auto* target_epr = received_qubits[seq_num];
-
-    int m1 = (bsm_outcome >> 1) & 1;
-    int m2 = bsm_outcome & 1;
-
-    QLOG("[TARGET] Received Teleport BSM for sequence " << seq_num << ". Applying Pauli Frame (m1=" << m1 << ", m2=" << m2 << ")");
-
-    // Apply Psi- Teleportation Pauli Corrections
-    if (m1 == 0 && m2 == 0) {
-      target_epr->gateX();
-    } else if (m1 == 0 && m2 == 1) {
-      // Identity - No operation needed
-    } else if (m1 == 1 && m2 == 0) {
-      target_epr->gateZ();
-      target_epr->gateX();
-    } else if (m1 == 1 && m2 == 1) {
-      target_epr->gateZ();
-    }
-
-    QLOG("[TARGET] Teleportation of Data Qubit " << seq_num << " complete. State recovered and preserved in pure form.");
-
-
-
-    if (local_stored_qubits.find(seq_num) != local_stored_qubits.end()) {
-      pure_teleported_qubits[seq_num] = local_stored_qubits[seq_num];
-      local_stored_qubits.erase(seq_num);
-      received_qubits.erase(seq_num);
-    }
-
-    stored_purified_qubit_seqs.erase(std::remove(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end(), seq_num), stored_purified_qubit_seqs.end());
-
-    if (stored_purified_qubit_seqs.empty()) {
-      QLOG("[TARGET] ==============================================================");
-      QLOG("[TARGET] Quantum Pad Permutation (QPP) successfully completed.");
-      QLOG("[TARGET] Entire block teleported safely. Pure states are locked in pure_teleported_qubits.");
-      QLOG("[TARGET] ==============================================================");
-    }
+    delete pkt;
   }
-  delete pkt;
+
+void QSDCRepeatersApplication::applyQuantumPadPermutation() {
+  if (stored_purified_qubit_seqs.empty()) {
+    QLOG("[QPP] WARNING: Cannot permute. EPR sequence array is empty.");
+    return;
+  }
+
+  std::mt19937 prng(deterministic_seed);
+
+  std::shuffle(stored_purified_qubit_seqs.begin(), stored_purified_qubit_seqs.end(), prng);
+  
+  QLOG("[QPP SOURCE] Memory mapped and permuted successfully using shared seed: " << deterministic_seed);
 }
 
 }  // namespace quisp::modules
