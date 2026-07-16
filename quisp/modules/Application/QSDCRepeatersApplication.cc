@@ -254,8 +254,8 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
   server_emitted_qubits[current_qubit_index + 1] = {qubit_pairs[1].qubit_1, qubit_pairs[1].qubit_2};
 
   // Send Target Qubit (Index K)
-  sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index);
-  sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index);
+  sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, QSDC_QUBIT_SYNC, current_qubit_index);
+  sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, QSDC_QUBIT_SYNC, current_qubit_index);
 
   auto* photon_left_0 = new quisp::messages::PhotonicQubit("SERVER_PHOTON_L_TARGET");
   photon_left_0->setQubitRef(qubit_pairs[0].qubit_1->getBackendQubitRef());
@@ -271,8 +271,8 @@ void QSDCRepeatersApplication::sendNextQubitPair() {
   send(photon_right_0, "toQuantum_r");
 
   // Send Source Qubit (Index K + 1)
-  sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1);
-  sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, "QSDC_QUBIT_SYNC", current_qubit_index + 1);
+  sendClassicalMessage(source_address, QSDC_QUBIT_SYNC, QSDC_QUBIT_SYNC, current_qubit_index + 1);
+  sendClassicalMessage(target_address, QSDC_QUBIT_SYNC, QSDC_QUBIT_SYNC, current_qubit_index + 1);
 
   auto* photon_left_1 = new quisp::messages::PhotonicQubit("SERVER_PHOTON_L_SOURCE");
   photon_left_1->setQubitRef(qubit_pairs[1].qubit_1->getBackendQubitRef());
@@ -342,7 +342,7 @@ void QSDCRepeatersApplication::processReceptionTimeout(omnetpp::cMessage* msg) {
   QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] FATAL: Timeout waiting for Qubits or Purification results.");
 
   // Alert the Server to discard and roll back the current sequence
-  sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", current_qubit_index);
+  sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, QSDC_QUBIT_ERROR, current_qubit_index);
 
   qubit_reception_timeout_msg = nullptr;
   delete msg;
@@ -1016,7 +1016,7 @@ void QSDCRepeatersApplication::handleMessage(cMessage* msg) {
     } else if (is_source || is_target) {
       expected_bsms_count = hop_msg->getQSDCHopCount();
       QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Hop Probe arrived! Dynamic Expected BSMs set to: " << expected_bsms_count);
-      sendClassicalMessage(hop_msg->getSrcAddr(), "QSDC_COMM_READY", "QSDC_COMM_READY");
+      sendClassicalMessage(hop_msg->getSrcAddr(), QSDC_COMM_READY, QSDC_COMM_READY);
       delete hop_msg;
     }
     return;
@@ -1154,13 +1154,13 @@ void QSDCRepeatersApplication::processMessageSetup(quisp::messages::QSDCSynAck* 
     int dynamic_source_address = pkt->getSrcAddr();
 
     // Initialize the Probes
-    auto* probe_source = new QSDCHopMessage("QSDC_COMM_START");
+    auto* probe_source = new QSDCHopMessage(QSDC_COMM_START);
     probe_source->setSrcAddr(self_address);
     probe_source->setDestAddr(dynamic_source_address);
     probe_source->setQSDCHopCount(0);
     send(probe_source, "toRouter");
 
-    auto* probe_target = new QSDCHopMessage("QSDC_COMM_START");
+    auto* probe_target = new QSDCHopMessage(QSDC_COMM_START);
     probe_target->setSrcAddr(self_address);
     probe_target->setDestAddr(target_address);  // Ensure Target's address is known dynamically as well
     probe_target->setQSDCHopCount(0);
@@ -1171,8 +1171,8 @@ void QSDCRepeatersApplication::processMessageSetup(quisp::messages::QSDCSynAck* 
 
 void QSDCRepeatersApplication::processQSDCPrepare(omnetpp::cMessage* msg) {
   QLOG("[SERVER] Initializing QSDC Protocol. Requesting EndNode Readiness.");
-  sendClassicalMessage(source_address, QSDC_COMM_START, "QSDC_COMM_START");
-  sendClassicalMessage(target_address, QSDC_COMM_START, "QSDC_COMM_START");
+  sendClassicalMessage(source_address, QSDC_COMM_START, QSDC_COMM_START);
+  sendClassicalMessage(target_address, QSDC_COMM_START, QSDC_COMM_START);
   delete msg;
 }
 
@@ -1194,7 +1194,7 @@ void QSDCRepeatersApplication::processCommStart(omnetpp::cMessage* msg) {
   expected_bsms_count = pkt->getExpectedBSMs();
   QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Received Start. Dynamic Expected BSMs set to: " << expected_bsms_count);
 
-  sendClassicalMessage(server_address, QSDC_COMM_READY, "QSDC_COMM_READY");
+  sendClassicalMessage(server_address, QSDC_COMM_READY, QSDC_COMM_READY);
   delete msg;
 }
 
@@ -1213,7 +1213,7 @@ void QSDCRepeatersApplication::processCommSync(quisp::messages::QSDCSynAck* pkt)
   }
 
   // Tell the Server we are safely cleared and ready
-  sendClassicalMessage(server_address, QSDC_COMM_ACK, "QSDC_COMM_ACK");  // 2 is Server
+  sendClassicalMessage(server_address, QSDC_COMM_ACK, QSDC_COMM_ACK);  // 2 is Server
   delete pkt;
 }
 
@@ -1272,8 +1272,8 @@ void QSDCRepeatersApplication::processCommReady(quisp::messages::QSDCSynAck* pkt
       source_ready = false;
       target_ready = false;
 
-      sendClassicalMessage(source_address, QSDC_COMM_SYNC, "QSDC_COMM_SYNC");
-      sendClassicalMessage(target_address, QSDC_COMM_SYNC, "QSDC_COMM_SYNC");
+      sendClassicalMessage(source_address, QSDC_COMM_SYNC, QSDC_COMM_SYNC);
+      sendClassicalMessage(target_address, QSDC_COMM_SYNC, QSDC_COMM_SYNC);
     }
   }
   delete pkt;
@@ -1407,7 +1407,7 @@ if (my_meas == partner_meas) {
     }
 
     stored_purified_qubit_seqs.push_back(target_seq);
-    sendClassicalMessage(server_address, QSDC_QUBIT_ACK, "QSDC_QUBIT_ACK", target_seq);
+    sendClassicalMessage(server_address, QSDC_QUBIT_ACK, QSDC_QUBIT_ACK, target_seq);
 
   } else {
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] Purification FAILED for Qubit " << target_seq << ". State compromised. Initiating ARQ.");
@@ -1415,7 +1415,7 @@ if (my_meas == partner_meas) {
     cleanupLocalMemory(target_seq);
     cleanupLocalMemory(target_seq + 1);
 
-    sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, "QSDC_QUBIT_ERROR", target_seq);
+    sendClassicalMessage(server_address, QSDC_QUBIT_ERROR, QSDC_QUBIT_ERROR, target_seq);
   }
 
   delete pkt;
@@ -1450,8 +1450,8 @@ void QSDCRepeatersApplication::processQubitError(quisp::messages::QSDCSynAck* pk
       clear_repeater_memories_target_msg->setDestAddr(target_address);
       send(clear_repeater_memories_target_msg, "toRouter");
 
-      sendClassicalMessage(source_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
-      sendClassicalMessage(target_address, QSDC_QUBIT_DISCARD, "QSDC_QUBIT_DISCARD", current_qubit_index);
+      sendClassicalMessage(source_address, QSDC_QUBIT_DISCARD, QSDC_QUBIT_DISCARD, current_qubit_index);
+      sendClassicalMessage(target_address, QSDC_QUBIT_DISCARD, QSDC_QUBIT_DISCARD, current_qubit_index);
     }
   }
   delete pkt;
@@ -1489,7 +1489,7 @@ void QSDCRepeatersApplication::processQubitDiscard(quisp::messages::QSDCSynAck* 
     my_local_measurements.erase(source_index);
 
     QLOG("[" << (is_source ? "SOURCE" : "TARGET") << "] ARQ: Local state scrubbed. QNIC slots freed. Sending CONTINUE to Server.");
-    sendClassicalMessage(server_address, QSDC_QUBIT_CONTINUE, "QSDC_QUBIT_CONTINUE", target_index);
+    sendClassicalMessage(server_address, QSDC_QUBIT_CONTINUE, QSDC_QUBIT_CONTINUE, target_index);
   }
 
   delete pkt;
@@ -1584,10 +1584,10 @@ void QSDCRepeatersApplication::processQKDBasisSync(quisp::messages::QSDCSynAck* 
   printPad();
 
   // 1st Message: Tell Server the Target is done
-  sendClassicalMessage(server_address, "QKD_COMPLETED", "QKD_COMPLETED");
+  sendClassicalMessage(server_address, QKD_COMPLETED, QKD_COMPLETED);
 
   // 2nd Message: Send Serialized Match Data to Source
-  auto* src_comp_msg = new QSDCSynAck("QKD_COMPLETED");
+  auto* src_comp_msg = new QSDCSynAck(QKD_COMPLETED);
   src_comp_msg->addPar("sifted_sequences").setStringValue(matched_seqs.c_str());
   src_comp_msg->setSrcAddr(self_address);
   src_comp_msg->setDestAddr(source_address);
@@ -1645,7 +1645,7 @@ void QSDCRepeatersApplication::processQKDCompleted(quisp::messages::QSDCSynAck* 
     printPad();
 
     // Source notifies the Server that it is finished
-    sendClassicalMessage(server_address, QKD_COMPLETED, "QKD_COMPLETED");
+    sendClassicalMessage(server_address, QKD_COMPLETED, QKD_COMPLETED);
 
   } else if (is_server) {
     // Reusing FSM flags to track EndNode completions
